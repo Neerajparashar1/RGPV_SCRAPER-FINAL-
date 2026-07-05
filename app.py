@@ -721,22 +721,29 @@ def start_session():
                 return jsonify({"ok": False, "error": f"Failed to create CSV file. Error: {file_err}"})
         else:
             try:
-                with open(session_filename, "r", newline="", encoding="utf-8") as f:
-                    reader = list(csv.reader(f))
-                if reader:
-                    existing_header = reader[0]
-                    expected_header = ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"]
-                    if existing_header != expected_header:
-                        logger.info(f"[SYSTEM LOGGER] Upgrading existing CSV header in '{session_filename}' to match current subject list.")
-                        upgraded_rows = [expected_header]
-                        for row in reader[1:]:
-                            if len(row) < len(expected_header):
-                                padded_row = row + [""] * (len(expected_header) - len(row))
-                                upgraded_rows.append(padded_row)
-                            else:
-                                upgraded_rows.append(row[:len(expected_header)])
-                        with open(session_filename, "w", newline="", encoding="utf-8") as f:
-                            csv.writer(f).writerows(upgraded_rows)
+                # In list mode, subjects are discovered dynamically per-student during
+                # submit() (see its own header-expansion logic there). session_subjects
+                # is intentionally empty here, so there is nothing meaningful to migrate
+                # the header to yet - skip, and let submit() grow the header correctly
+                # as real subjects are found. Migrating now would otherwise treat the
+                # existing subject columns as "unexpected" and silently drop their data.
+                if session_subjects:
+                    with open(session_filename, "r", newline="", encoding="utf-8") as f:
+                        reader = list(csv.reader(f))
+                    if reader:
+                        existing_header = reader[0]
+                        expected_header = ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"]
+                        if existing_header != expected_header:
+                            logger.info(f"[SYSTEM LOGGER] Upgrading existing CSV header in '{session_filename}' to match current subject list.")
+                            upgraded_rows = [expected_header]
+                            for row in reader[1:]:
+                                new_row = [""] * len(expected_header)
+                                for i, col_name in enumerate(existing_header):
+                                    if col_name in expected_header and i < len(row):
+                                        new_row[expected_header.index(col_name)] = row[i]
+                                upgraded_rows.append(new_row)
+                            with open(session_filename, "w", newline="", encoding="utf-8") as f:
+                                csv.writer(f).writerows(upgraded_rows)
             except PermissionError:
                 return jsonify({"ok": False, "error": f"Permission denied accessing '{clean_filename}'. Please close the CSV file if it is open in Excel or another program."})
             except Exception as file_err:
