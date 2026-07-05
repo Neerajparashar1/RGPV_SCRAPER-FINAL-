@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environments
+.venv/
+.venv1/
+
+# Build artifacts
+build/
+dist/
+
+# WebDriver binaries
+msedgedriver.exe
+msedgedriver_old.exe
+edgedriver_extracted/
+
+# Scraped student result data (contains personal info)
+CS_Core/
+CS_Emerging/
+IT/
+MCA/
+results/
+results_page_source.html
+
+# IDE
+.idea/
