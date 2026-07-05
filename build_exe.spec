@@ -112,6 +112,9 @@ a = Analysis(
         # ── UI template ──────────────────────────────────────
         ('templates', 'templates'),
 
+        # ── UI static assets (CSS/JS) ─────────────────────────
+        ('static', 'static'),
+
         # ── Pre-bundled msedgedriver.exe for offline reliability ──────────
         ('msedgedriver.exe', '.'),
 

@@ -9,7 +9,8 @@ echo =====================================================
 echo.
 
 :: Check if .venv1 exists
-if not exist ".venv1\Scripts\python.exe" (
+call ".\find_venv_python.bat"
+if not "%VENV1_PYTHON_FOUND%"=="1" (
     color 0C
     echo [ERROR] .venv1 virtual environment not found!
     echo Please run setup.bat first.
@@ -18,7 +19,7 @@ if not exist ".venv1\Scripts\python.exe" (
 )
 
 :: Check if PyInstaller is available, install if not
-.venv1\Scripts\python.exe -c "import PyInstaller" >nul 2>&1
+"%PYTHON_EXE%" -c "import PyInstaller" >nul 2>&1
 if %errorlevel% neq 0 (
     echo [INFO] Installing PyInstaller...
     .venv1\Scripts\pip.exe install pyinstaller
@@ -36,7 +37,7 @@ echo [STEP 2/3] Building EXE (please wait 5-10 minutes)...
 echo [INFO] Do NOT close this window.
 echo.
 
-.venv1\Scripts\python.exe -m PyInstaller build_exe.spec --noconfirm
+"%PYTHON_EXE%" -m PyInstaller build_exe.spec --noconfirm
 
 if %errorlevel% neq 0 (
     color 0C

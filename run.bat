@@ -8,10 +8,8 @@ echo ===================================================
 echo.
 
 :: 1. Determine which Python to use
-set "PYTHON_EXE="
-
-if exist ".venv1\Scripts\python.exe" (
-    set "PYTHON_EXE=.venv1\Scripts\python.exe"
+call ".\find_venv_python.bat"
+if "%VENV1_PYTHON_FOUND%"=="1" (
     echo [INFO] Using virtual environment [venv1]...
     goto PYTHON_CHECK_DONE
 )

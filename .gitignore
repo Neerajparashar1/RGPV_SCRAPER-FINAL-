@@ -26,3 +26,6 @@ results_page_source.html
 
 # IDE
 .idea/
+
+# Claude Code local tooling state
+.claude/

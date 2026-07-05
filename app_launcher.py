@@ -32,6 +32,7 @@ def exe_dir() -> str:
 
 # ── Environment variables set karo BEFORE importing app ──────────
 os.environ['RGPV_TEMPLATE_FOLDER'] = resource_path('templates')
+os.environ['RGPV_STATIC_FOLDER']   = resource_path('static')
 os.environ['RGPV_BASE_DIR']        = exe_dir()
 
 # Selenium Manager binary — frozen EXE mein sys._MEIPASS ke andar hoga

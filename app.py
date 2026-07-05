@@ -43,6 +43,8 @@ import time
 import re
 import csv
 import io
+import logging
+from logging.handlers import RotatingFileHandler
 import requests
 from flask import Flask, render_template, request, jsonify, send_file
 from bs4 import BeautifulSoup
@@ -72,6 +74,24 @@ def get_base_dir() -> str:
     return os.environ.get('RGPV_BASE_DIR', os.path.dirname(os.path.abspath(__file__)))
 
 
+# ── Logging setup ──────────────────────────────────────────────
+logger = logging.getLogger("rgpv_scraper")
+logger.setLevel(logging.INFO)
+_log_formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(message)s", datefmt="%H:%M:%S")
+
+_console_handler = logging.StreamHandler()
+_console_handler.setFormatter(_log_formatter)
+logger.addHandler(_console_handler)
+
+try:
+    _log_path = os.path.join(get_base_dir(), "rgpv_scraper.log")
+    _file_handler = RotatingFileHandler(_log_path, maxBytes=2 * 1024 * 1024, backupCount=2, encoding="utf-8")
+    _file_handler.setFormatter(_log_formatter)
+    logger.addHandler(_file_handler)
+except Exception as _log_err:
+    logger.warning(f"Could not set up log file: {_log_err}")
+
+
 def get_edge_service() -> Service:
     """
     Returns a Selenium Service for Edge.
@@ -85,33 +105,33 @@ def get_edge_service() -> Service:
     if getattr(sys, 'frozen', False):
         bundled_driver = os.path.join(sys._MEIPASS, 'msedgedriver.exe')
         if os.path.exists(bundled_driver):
-            print(f'[SYSTEM LOGGER] Using bundled msedgedriver from EXE bundle.')
+            logger.info(f'[SYSTEM LOGGER] Using bundled msedgedriver from EXE bundle.')
             try:
                 return Service(executable_path=bundled_driver)
             except Exception as e:
-                print(f'[SYSTEM LOGGER] Bundled driver failed: {e}. Trying fallbacks...')
+                logger.info(f'[SYSTEM LOGGER] Bundled driver failed: {e}. Trying fallbacks...')
 
     # ── 2. msedgedriver.exe placed next to EXE (manual override) ──────────
     local_path = os.path.abspath('msedgedriver.exe')
     if os.path.exists(local_path):
         try:
-            print(f'[SYSTEM LOGGER] Using local msedgedriver.exe from EXE directory.')
+            logger.info(f'[SYSTEM LOGGER] Using local msedgedriver.exe from EXE directory.')
             return Service(executable_path=local_path)
         except Exception as local_err:
-            print(f'[SYSTEM LOGGER] Local msedgedriver failed: {local_err}')
+            logger.info(f'[SYSTEM LOGGER] Local msedgedriver failed: {local_err}')
 
     # ── 3. Selenium Manager auto-detect (needs internet on first run) ──────
     try:
         return Service()
     except Exception as e:
-        print(f'[SYSTEM LOGGER] Selenium Manager service initialization failed: {e}')
+        logger.info(f'[SYSTEM LOGGER] Selenium Manager service initialization failed: {e}')
 
     # ── 4. Fallback: webdriver-manager auto-download ───────────────────────
     try:
         from webdriver_manager.microsoft import EdgeChromiumDriverManager
         return Service(EdgeChromiumDriverManager().install())
     except Exception as manager_err:
-        print(f'[SYSTEM LOGGER] Webdriver manager fallback failed: {manager_err}')
+        logger.info(f'[SYSTEM LOGGER] Webdriver manager fallback failed: {manager_err}')
         raise RuntimeError(
             'All Edge driver initialization methods failed completely.\n'
             'Please ensure Microsoft Edge is installed on your system.'
@@ -157,16 +177,16 @@ def check_driver_health():
             
         if session_program == "MCA":
             if "MCArslt.aspx" not in current_url:
-                print(f"[SYSTEM LOGGER] Driver URL check failed: current URL '{current_url}' does not contain 'MCArslt.aspx'. Triggering recovery...")
+                logger.info(f"[SYSTEM LOGGER] Driver URL check failed: current URL '{current_url}' does not contain 'MCArslt.aspx'. Triggering recovery...")
                 return False
         else:
             if "BErslt.aspx" not in current_url:
-                print(f"[SYSTEM LOGGER] Driver URL check failed: current URL '{current_url}' does not contain 'BErslt.aspx'. Triggering recovery...")
+                logger.info(f"[SYSTEM LOGGER] Driver URL check failed: current URL '{current_url}' does not contain 'BErslt.aspx'. Triggering recovery...")
                 return False
                 
         return True
     except Exception as e:
-        print(f"[SYSTEM LOGGER] Driver health check failed: {e}")
+        logger.info(f"[SYSTEM LOGGER] Driver health check failed: {e}")
         return False
 
 
@@ -175,7 +195,7 @@ def reset_results_form(driver, session_program):
     Resets the results form by finding and clicking the 'Reset' or 'Back' button,
     or falls back to a clean page load if not found.
     """
-    print("[SYSTEM LOGGER] reset_results_form() called.")
+    logger.info("[SYSTEM LOGGER] reset_results_form() called.")
     try:
         # Dismiss any active alert first
         dismiss_alerts_safely(driver)
@@ -206,25 +226,25 @@ def reset_results_form(driver, session_program):
                     driver.execute_script("arguments[0].scrollIntoView(true);", elem)
                     time.sleep(0.1)
                     elem.click()
-                    print(f"[SYSTEM LOGGER] Reset/Back button clicked successfully via {by}='{value}'")
+                    logger.info(f"[SYSTEM LOGGER] Reset/Back button clicked successfully via {by}='{value}'")
                     clicked = True
                     break
             except Exception:
                 pass
                 
         if not clicked:
-            print("[SYSTEM LOGGER] Reset button not found or not clickable. Executing JS reset fallback...")
+            logger.info("[SYSTEM LOGGER] Reset button not found or not clickable. Executing JS reset fallback...")
             # Try to trigger the postback directly via JS
             try:
                 driver.execute_script("if(window.__doPostBack) { __doPostBack('ctl00$ContentPlaceHolder1$btnReset',''); }")
                 clicked = True
-                print("[SYSTEM LOGGER] JS __doPostBack('ctl00$ContentPlaceHolder1$btnReset','') triggered.")
+                logger.info("[SYSTEM LOGGER] JS __doPostBack('ctl00$ContentPlaceHolder1$btnReset','') triggered.")
             except Exception as js_err:
-                print(f"[SYSTEM LOGGER] JS postback reset failed: {js_err}")
+                logger.info(f"[SYSTEM LOGGER] JS postback reset failed: {js_err}")
                 
         if not clicked:
             # Fallback to driver.get if reset button was completely missing or failed
-            print("[SYSTEM LOGGER] No reset button available. Falling back to clean page reload...")
+            logger.info("[SYSTEM LOGGER] No reset button available. Falling back to clean page reload...")
             url = "http://result.rgpv.ac.in/Result/MCArslt.aspx" if session_program == "MCA" else "http://result.rgpv.ac.in/Result/BErslt.aspx"
             driver.get(url)
             
@@ -236,11 +256,11 @@ def reset_results_form(driver, session_program):
         WebDriverWait(driver, 10).until(
             EC.element_to_be_clickable((By.ID, "ctl00_ContentPlaceHolder1_drpSemester"))
         )
-        print("[SYSTEM LOGGER] Form reset/reload state verified successfully. Waiting 0.8s for portal readiness...")
+        logger.info("[SYSTEM LOGGER] Form reset/reload state verified successfully. Waiting 0.8s for portal readiness...")
         time.sleep(0.8)
         
     except Exception as e:
-        print(f"[SYSTEM LOGGER] Form reset/reload failed: {e}. Attempting recovery page reload...")
+        logger.info(f"[SYSTEM LOGGER] Form reset/reload failed: {e}. Attempting recovery page reload...")
         try:
             url = "http://result.rgpv.ac.in/Result/MCArslt.aspx" if session_program == "MCA" else "http://result.rgpv.ac.in/Result/BErslt.aspx"
             driver.get(url)
@@ -249,14 +269,14 @@ def reset_results_form(driver, session_program):
                 EC.element_to_be_clickable((By.ID, "ctl00_ContentPlaceHolder1_drpSemester"))
             )
         except Exception as recovery_err:
-            print(f"[SYSTEM LOGGER] Recovery page reload failed: {recovery_err}")
+            logger.info(f"[SYSTEM LOGGER] Recovery page reload failed: {recovery_err}")
             raise recovery_err
 
 
 def heal_browser_session():
     global driver, session_program, session_branch_id, session_sem, session_prefix, last_captcha_src
     last_captcha_src = None
-    print("[SYSTEM LOGGER] Browser window closed or unresponsive. Initiating self-healing recovery...")
+    logger.info("[SYSTEM LOGGER] Browser window closed or unresponsive. Initiating self-healing recovery...")
     try:
         if driver:
             try:
@@ -272,7 +292,7 @@ def heal_browser_session():
         options = EdgeOptions()
         edge_bin = find_edge_binary()
         if edge_bin:
-            print(f"[SYSTEM LOGGER] Auto-detected Edge binary location during recovery: {edge_bin}")
+            logger.info(f"[SYSTEM LOGGER] Auto-detected Edge binary location during recovery: {edge_bin}")
             options.binary_location = edge_bin
         
         options.add_argument("--disable-gpu")
@@ -287,7 +307,7 @@ def heal_browser_session():
         from selenium.webdriver.support import expected_conditions as EC
         
         if session_program == "MCA":
-            print("[SYSTEM LOGGER] MCA selected in self-healing. Clicking MCA program...")
+            logger.info("[SYSTEM LOGGER] MCA selected in self-healing. Clicking MCA program...")
             try:
                 WebDriverWait(new_driver, 10).until(
                     EC.element_to_be_clickable((By.ID, "radlstProgram_17"))
@@ -297,7 +317,7 @@ def heal_browser_session():
                     EC.element_to_be_clickable((By.ID, "radlstProgram_2"))
                 ).click()
         else:
-            print("[SYSTEM LOGGER] B.Tech selected in self-healing. Clicking B.Tech program...")
+            logger.info("[SYSTEM LOGGER] B.Tech selected in self-healing. Clicking B.Tech program...")
             WebDriverWait(new_driver, 10).until(
                 EC.element_to_be_clickable((By.ID, "radlstProgram_1"))
             ).click()
@@ -311,17 +331,18 @@ def heal_browser_session():
         dismiss_alerts_safely(new_driver)
         
         driver = new_driver
-        print("[SYSTEM LOGGER] Browser self-healing recovery successful!")
+        logger.info("[SYSTEM LOGGER] Browser self-healing recovery successful!")
         return True
     except Exception as recovery_err:
-        print(f"[SYSTEM LOGGER] Browser self-healing recovery failed: {recovery_err}")
+        logger.info(f"[SYSTEM LOGGER] Browser self-healing recovery failed: {recovery_err}")
         return False
 
 
 
-# When running as frozen EXE, template folder is inside sys._MEIPASS
+# When running as frozen EXE, template/static folders are inside sys._MEIPASS
 _template_folder = os.environ.get('RGPV_TEMPLATE_FOLDER', 'templates')
-app = Flask(__name__, template_folder=_template_folder)
+_static_folder = os.environ.get('RGPV_STATIC_FOLDER', 'static')
+app = Flask(__name__, template_folder=_template_folder, static_folder=_static_folder)
 
 # ── Force all errors to return JSON (never HTML) ──────────────
 app.config['PROPAGATE_EXCEPTIONS'] = False
@@ -338,8 +359,7 @@ def handle_exception(e):
     """Return JSON for all unhandled Python exceptions instead of HTML."""
     if isinstance(e, HTTPException):
         return handle_http_exception(e)
-    import traceback
-    traceback.print_exc()
+    logger.exception("Unhandled exception")
     return jsonify({"ok": False, "error": f"Server error: {str(e)}"}), 500
 
 # ── Global driver state ──────────────────────────────────────
@@ -408,9 +428,9 @@ def get_dddd_ocr():
             # PyInstaller correctly sets __file__ for bundled packages, so ddddocr
             # finds its ONNX models at sys._MEIPASS/ddddocr/ automatically.
             dddd_ocr_engine = ddddocr.DdddOcr(show_ad=False)
-            print("[SYSTEM LOGGER] Deep Learning AI Captcha Solver loaded successfully!")
+            logger.info("[SYSTEM LOGGER] Deep Learning AI Captcha Solver loaded successfully!")
         except Exception as e:
-            print(f"[SYSTEM LOGGER] Deep Learning AI Captcha Solver load failed: {e}. Falling back to Tesseract.")
+            logger.info(f"[SYSTEM LOGGER] Deep Learning AI Captcha Solver load failed: {e}. Falling back to Tesseract.")
             dddd_ocr_engine = False
     return dddd_ocr_engine if dddd_ocr_engine else None
 
@@ -530,7 +550,7 @@ def dismiss_alerts_safely(driver_instance):
         try:
             alert = driver_instance.switch_to.alert
             alert_text = alert.text
-            print(f"[SYSTEM LOGGER] Auto-dismissed blocking portal alert: '{alert_text}'")
+            logger.info(f"[SYSTEM LOGGER] Auto-dismissed blocking portal alert: '{alert_text}'")
             alert.accept()
             time.sleep(0.5)
         except Exception:
@@ -661,7 +681,7 @@ def start_session():
         #   - Any student whose subjects differ from the session branch
         if session_mode == "list":
             session_subjects = []
-            print("[SYSTEM LOGGER] List mode: subjects will be detected dynamically from portal results.")
+            logger.info("[SYSTEM LOGGER] List mode: subjects will be detected dynamically from portal results.")
 
         # Create or dynamically upgrade CSV with structured subject columns
         if not os.path.exists(session_filename):
@@ -672,9 +692,8 @@ def start_session():
             except PermissionError:
                 return jsonify({"ok": False, "error": f"Permission denied creating '{clean_filename}'. Please close the CSV file if it is open in Excel or another program."})
             except Exception as file_err:
-                print(f"[SYSTEM LOGGER] File create failed for '{session_filename}': {file_err}")
-                import traceback
-                traceback.print_exc()
+                logger.info(f"[SYSTEM LOGGER] File create failed for '{session_filename}': {file_err}")
+                logger.exception("Unhandled exception")
                 return jsonify({"ok": False, "error": f"Failed to create CSV file. Error: {file_err}"})
         else:
             try:
@@ -684,7 +703,7 @@ def start_session():
                     existing_header = reader[0]
                     expected_header = ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"]
                     if existing_header != expected_header:
-                        print(f"[SYSTEM LOGGER] Upgrading existing CSV header in '{session_filename}' to match current subject list.")
+                        logger.info(f"[SYSTEM LOGGER] Upgrading existing CSV header in '{session_filename}' to match current subject list.")
                         upgraded_rows = [expected_header]
                         for row in reader[1:]:
                             if len(row) < len(expected_header):
@@ -697,7 +716,7 @@ def start_session():
             except PermissionError:
                 return jsonify({"ok": False, "error": f"Permission denied accessing '{clean_filename}'. Please close the CSV file if it is open in Excel or another program."})
             except Exception as file_err:
-                print(f"[SYSTEM LOGGER] CSV upgrade failed for '{session_filename}': {file_err}")
+                logger.info(f"[SYSTEM LOGGER] CSV upgrade failed for '{session_filename}': {file_err}")
 
         if driver:
             try:
@@ -711,11 +730,11 @@ def start_session():
             options = EdgeOptions()
             edge_bin = find_edge_binary()
             if edge_bin:
-                print(f"[SYSTEM LOGGER] Auto-detected Edge binary location: {edge_bin}")
+                logger.info(f"[SYSTEM LOGGER] Auto-detected Edge binary location: {edge_bin}")
                 options.binary_location = edge_bin
             new_driver = webdriver.Edge(service=service, options=options)
         except Exception as e:
-            print(f"[SYSTEM LOGGER] Primary Edge driver start failed: {e}. Attempting self-healing driver repair...")
+            logger.info(f"[SYSTEM LOGGER] Primary Edge driver start failed: {e}. Attempting self-healing driver repair...")
             local_path = os.path.abspath("msedgedriver.exe")
             if os.path.exists(local_path):
                 try:
@@ -724,9 +743,9 @@ def start_session():
                     if os.path.exists(backup_path):
                         os.remove(backup_path)
                     os.rename(local_path, backup_path)
-                    print("[SYSTEM LOGGER] Outdated msedgedriver.exe moved out of the way successfully!")
+                    logger.info("[SYSTEM LOGGER] Outdated msedgedriver.exe moved out of the way successfully!")
                 except Exception as file_err:
-                    print(f"[SYSTEM LOGGER] Failed to move local driver: {file_err}")
+                    logger.info(f"[SYSTEM LOGGER] Failed to move local driver: {file_err}")
 
             try:
                 from webdriver_manager.microsoft import EdgeChromiumDriverManager
@@ -758,25 +777,25 @@ def start_session():
 
         # Select and click correct program radio option dynamically
         if program == "MCA":
-            print("[SYSTEM LOGGER] MCA selected. Clicktargeting MCA (2-Year) program...")
+            logger.info("[SYSTEM LOGGER] MCA selected. Clicktargeting MCA (2-Year) program...")
             try:
                 # Primary choice: M.C.A. (2-Year) - radlstProgram_17
                 WebDriverWait(new_driver, 10).until(
                     EC.element_to_be_clickable((By.ID, "radlstProgram_17"))
                 ).click()
             except Exception as e:
-                print(f"[SYSTEM LOGGER] Primary MCA (2-Year) click failed: {e}. Falling back to standard M.C.A. (radlstProgram_2)...")
+                logger.info(f"[SYSTEM LOGGER] Primary MCA (2-Year) click failed: {e}. Falling back to standard M.C.A. (radlstProgram_2)...")
                 WebDriverWait(new_driver, 10).until(
                     EC.element_to_be_clickable((By.ID, "radlstProgram_2"))
                 ).click()
         else:
-            print("[SYSTEM LOGGER] B.Tech selected. Clicktargeting B.Tech...")
+            logger.info("[SYSTEM LOGGER] B.Tech selected. Clicktargeting B.Tech...")
             WebDriverWait(new_driver, 10).until(
                 EC.element_to_be_clickable((By.ID, "radlstProgram_1"))
             ).click()
         
         # Wait up to 10 seconds for the page to redirect to correct grading results form
-        print("[SYSTEM LOGGER] Waiting for redirection to correct results page...")
+        logger.info("[SYSTEM LOGGER] Waiting for redirection to correct results page...")
         if program == "MCA":
             WebDriverWait(new_driver, 15).until(
                 EC.url_contains("MCArslt.aspx")
@@ -785,7 +804,7 @@ def start_session():
             WebDriverWait(new_driver, 15).until(
                 EC.url_contains("BErslt.aspx")
             )
-        print("[SYSTEM LOGGER] Redirection successful!")
+        logger.info("[SYSTEM LOGGER] Redirection successful!")
         time.sleep(1.0)
         
         # Check and dismiss any alert on redirect
@@ -798,8 +817,7 @@ def start_session():
             "message": f"Browser started for {BRANCHES[branch_id]['name']} sem {sem} with prefix {session_prefix}"
         })
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unhandled exception")
         return jsonify({"ok": False, "error": f"Start session failed: {e}"})
 
 
@@ -831,7 +849,7 @@ def get_captcha():
             from selenium.webdriver.support.ui import WebDriverWait
             from selenium.webdriver.support import expected_conditions as EC
 
-            print(f"[SYSTEM LOGGER] Waiting for drpSemester to load for roll {roll_number}...")
+            logger.info(f"[SYSTEM LOGGER] Waiting for drpSemester to load for roll {roll_number}...")
             
             # Dismiss any blocking alerts first
             dismiss_alerts_safely(driver)
@@ -839,7 +857,7 @@ def get_captcha():
             # If on ProgramSelect.aspx, click B.Tech or MCA program first to get to results form
             current_url = driver.current_url
             if "ProgramSelect.aspx" in current_url:
-                print(f"[SYSTEM LOGGER] Browser is on ProgramSelect.aspx. Clicking program '{session_program}'...")
+                logger.info(f"[SYSTEM LOGGER] Browser is on ProgramSelect.aspx. Clicking program '{session_program}'...")
                 if session_program == "MCA":
                     try:
                         WebDriverWait(driver, 10).until(
@@ -870,10 +888,10 @@ def get_captcha():
                 current_sem = Select(dropdown_element).first_selected_option.get_attribute("value")
                 if current_sem != session_sem:
                     Select(dropdown_element).select_by_value(session_sem)
-                    print(f"[SYSTEM LOGGER] Selected semester {session_sem}.")
+                    logger.info(f"[SYSTEM LOGGER] Selected semester {session_sem}.")
                     time.sleep(SPEED_CONFIGS.get(session_speed_mode, SPEED_CONFIGS["normal"])["settle"])
                 else:
-                    print("[SYSTEM LOGGER] Semester already correct (no change triggered).")
+                    logger.info("[SYSTEM LOGGER] Semester already correct (no change triggered).")
 
                 # Wait for the roll number input to be clickable
                 roll_field = WebDriverWait(driver, 8.0).until(
@@ -890,13 +908,13 @@ def get_captcha():
                         "}",
                         roll_number
                     )
-                    print(f"[SYSTEM LOGGER] Entered roll number instantly via JS: {roll_number}")
+                    logger.info(f"[SYSTEM LOGGER] Entered roll number instantly via JS: {roll_number}")
                     time.sleep(SPEED_CONFIGS.get(session_speed_mode, SPEED_CONFIGS["normal"])["roll_enter"])
                 else:
-                    print("[SYSTEM LOGGER] Roll number already correct (no change triggered).")
-                print("[SYSTEM LOGGER] Standard form fill succeeded!")
+                    logger.info("[SYSTEM LOGGER] Roll number already correct (no change triggered).")
+                logger.info("[SYSTEM LOGGER] Standard form fill succeeded!")
             except Exception as selenium_err:
-                print(f"[SYSTEM LOGGER] Standard form fill failed: {selenium_err}. Attempting Javascript-based fallback...")
+                logger.info(f"[SYSTEM LOGGER] Standard form fill failed: {selenium_err}. Attempting Javascript-based fallback...")
                 
                 # Fallback method: Direct JavaScript injection (100% bulletproof & guarded)
                 success = driver.execute_script(
@@ -917,18 +935,17 @@ def get_captcha():
                 if not success:
                     raise Exception(f"Form elements (drpSemester or txtrollno) not found in DOM. Standard error: {selenium_err}")
                 time.sleep(SPEED_CONFIGS.get(session_speed_mode, SPEED_CONFIGS["normal"])["settle"] + 0.1)
-                print("[SYSTEM LOGGER] Javascript fallback form fill executed successfully!")
+                logger.info("[SYSTEM LOGGER] Javascript fallback form fill executed successfully!")
 
         except TimeoutException as time_err:
-            print(f"[SYSTEM LOGGER] Form fill timed out. Scaling up wait delay due to server lag.")
+            logger.info(f"[SYSTEM LOGGER] Form fill timed out. Scaling up wait delay due to server lag.")
             if session_wait_value < 45.0:
                 session_wait_value = min(45.0, session_wait_value + 5.0)
-                print(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s")
+                logger.info(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s")
             return jsonify({"ok": False, "error": f"Portal page load timed out. Delay scaled to {session_wait_value}s. Try again."})
         except Exception as e:
-            print(f"[SYSTEM LOGGER] Form fill error: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.info(f"[SYSTEM LOGGER] Form fill error: {e}")
+            logger.exception("Unhandled exception")
             return jsonify({"ok": False, "error": f"Form fill error: {e}. Please check if the portal page has fully loaded."})
 
         # ── CAPTCHA IMAGE: Selenium element screenshot (fastest + always GUID-sync) ──
@@ -960,21 +977,21 @@ def get_captcha():
                     time.sleep(0.15)
                     # Re-locate to ensure we capture the updated DOM element
                     captcha_elem = driver.find_element(By.XPATH, "//div[@id='ctl00_ContentPlaceHolder1_pnlCaptcha']//img")
-                    print("[SYSTEM LOGGER] Stale captcha check: captcha src updated and fully loaded in browser.")
+                    logger.info("[SYSTEM LOGGER] Stale captcha check: captcha src updated and fully loaded in browser.")
                 except Exception as wait_err:
-                    print(f"[SYSTEM LOGGER] Stale captcha check: wait for new captcha load timed out: {wait_err}")
+                    logger.info(f"[SYSTEM LOGGER] Stale captcha check: wait for new captcha load timed out: {wait_err}")
 
             # Save the new captcha src
             try:
                 last_captcha_src = captcha_elem.get_attribute("src")
-                print(f"[SYSTEM LOGGER] Current Captcha URL saved: {last_captcha_src}")
+                logger.info(f"[SYSTEM LOGGER] Current Captcha URL saved: {last_captcha_src}")
             except Exception as src_err:
-                print(f"[SYSTEM LOGGER] Failed to read captcha src: {src_err}")
+                logger.info(f"[SYSTEM LOGGER] Failed to read captcha src: {src_err}")
 
             img_bytes = captcha_elem.screenshot_as_png
-            print(f"[SYSTEM LOGGER] Captcha captured via element screenshot ({len(img_bytes)} bytes)")
+            logger.info(f"[SYSTEM LOGGER] Captcha captured via element screenshot ({len(img_bytes)} bytes)")
         except Exception as ss_err:
-            print(f"[SYSTEM LOGGER] Element screenshot failed: {ss_err}. Falling back to requests.get...")
+            logger.info(f"[SYSTEM LOGGER] Element screenshot failed: {ss_err}. Falling back to requests.get...")
 
         # Fallback: download via requests (old method) if screenshot failed
         if not img_bytes:
@@ -1002,9 +1019,9 @@ def get_captcha():
                     if r.status_code == 200:
                         img_bytes = r.content
                         break
-                    print(f"[SYSTEM LOGGER] Captcha download attempt {attempt} returned HTTP {r.status_code}")
+                    logger.info(f"[SYSTEM LOGGER] Captcha download attempt {attempt} returned HTTP {r.status_code}")
                 except Exception as net_err:
-                    print(f"[SYSTEM LOGGER] Captcha download attempt {attempt} failed: {net_err}")
+                    logger.info(f"[SYSTEM LOGGER] Captcha download attempt {attempt} failed: {net_err}")
                     if attempt == 3:
                         return jsonify({"ok": False, "error": f"Captcha download failed: {net_err}"})
                     time.sleep(2.0)
@@ -1029,9 +1046,9 @@ def get_captcha():
                 captcha_text = re.sub(r'[^A-Z0-9]', '', raw_prediction.upper()).strip()
                 if captcha_text:
                     solver_used = "deep_learning"
-                    print(f"[SYSTEM LOGGER] Deep Learning AI Solved Captcha (Raw Mode): '{captcha_text}'")
+                    logger.info(f"[SYSTEM LOGGER] Deep Learning AI Solved Captcha (Raw Mode): '{captcha_text}'")
         except Exception as dl_err:
-            print(f"[SYSTEM LOGGER] Deep Learning AI Solver failed: {dl_err}. Falling back to Tesseract.")
+            logger.info(f"[SYSTEM LOGGER] Deep Learning AI Solver failed: {dl_err}. Falling back to Tesseract.")
 
 
 
@@ -1062,7 +1079,7 @@ def get_captcha():
                         if os.path.exists(p):
                             pytesseract.pytesseract.tesseract_cmd = p
                             tesseract_found = True
-                            print(f"[SYSTEM LOGGER] Dynamic fallback: set tesseract path to '{p}'")
+                            logger.info(f"[SYSTEM LOGGER] Dynamic fallback: set tesseract path to '{p}'")
                             break
 
                 if not tesseract_found:
@@ -1075,7 +1092,7 @@ def get_captcha():
                         "3. Restart this application."
                     )
                     solver_used = "manual"
-                    print(f"[SYSTEM LOGGER] {ocr_error_msg}")
+                    logger.info(f"[SYSTEM LOGGER] {ocr_error_msg}")
                 else:
                     # Read image from bytes
                     img = Image.open(io.BytesIO(img_bytes))
@@ -1101,7 +1118,7 @@ def get_captcha():
                     # Extract alphanumeric uppercase characters only and strip whitespace
                     captcha_text = re.sub(r'[^A-Z0-9]', '', raw_text.upper()).strip()
                     solver_used = "tesseract"
-                    print(f"[SYSTEM LOGGER] Tesseract OCR Solved Captcha: '{captcha_text}'")
+                    logger.info(f"[SYSTEM LOGGER] Tesseract OCR Solved Captcha: '{captcha_text}'")
 
             except ImportError as imp_err:
                 ocr_error = "missing_dependencies"
@@ -1112,12 +1129,12 @@ def get_captcha():
                     "Or manually run in your terminal: pip install pytesseract Pillow"
                 )
                 solver_used = "manual"
-                print(f"[SYSTEM LOGGER] {ocr_error_msg}")
+                logger.info(f"[SYSTEM LOGGER] {ocr_error_msg}")
             except Exception as ocr_err:
                 ocr_error = "ocr_failed"
                 ocr_error_msg = f"OCR solver failed internally: {ocr_err}"
                 solver_used = "manual"
-                print(f"[SYSTEM LOGGER] {ocr_error_msg}")
+                logger.info(f"[SYSTEM LOGGER] {ocr_error_msg}")
 
         return jsonify({
             "ok": True,
@@ -1128,8 +1145,7 @@ def get_captcha():
             "solver_used": solver_used
         })
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unhandled exception")
         return jsonify({"ok": False, "error": f"Captcha extraction failed: {e}"})
 
 
@@ -1159,8 +1175,8 @@ def submit():
         if not captcha:
             return jsonify({"ok": False, "error": "Captcha is required"})
 
-        print(f"[SYSTEM LOGGER] submit() called: roll='{roll}', captcha='{captcha}', full_roll_mode={full_roll_mode}")
-        print(f"[SYSTEM LOGGER] Session variables: prefix='{session_prefix}', filename='{session_filename}', sem='{session_sem}'")
+        logger.info(f"[SYSTEM LOGGER] submit() called: roll='{roll}', captcha='{captcha}', full_roll_mode={full_roll_mode}")
+        logger.info(f"[SYSTEM LOGGER] Session variables: prefix='{session_prefix}', filename='{session_filename}', sem='{session_sem}'")
 
         if full_roll_mode:
             roll_number = roll.upper()  # Already full roll number (from Excel list mode)
@@ -1202,10 +1218,10 @@ def submit():
                         "return img ? img.src : '';"
                     )
                     if last_captcha_src and current_img_src and current_img_src != last_captcha_src:
-                        print(f"[SYSTEM LOGGER] Captcha src changed before submit — aborting. old='{last_captcha_src}' new='{current_img_src}'")
+                        logger.info(f"[SYSTEM LOGGER] Captcha src changed before submit — aborting. old='{last_captcha_src}' new='{current_img_src}'")
                         return jsonify({"ok": True, "status": "captcha_expired", "message": "Captcha image changed before submission. Re-solving..."})
                 except Exception as src_err:
-                    print(f"[SYSTEM LOGGER] Could not verify captcha src: {src_err}")
+                    logger.info(f"[SYSTEM LOGGER] Could not verify captcha src: {src_err}")
 
                 # Fill captcha text box (safe — captcha field events do NOT trigger captcha refresh)
                 captcha_box = WebDriverWait(driver, 8).until(
@@ -1213,7 +1229,7 @@ def submit():
                 )
                 captcha_box.clear()
                 captcha_box.send_keys(captcha)
-                print(f"[SYSTEM LOGGER] Captcha entered. Waiting {session_submit_delay}s before clicking View Result...")
+                logger.info(f"[SYSTEM LOGGER] Captcha entered. Waiting {session_submit_delay}s before clicking View Result...")
                 time.sleep(session_submit_delay)
 
                 # Click View Result button directly
@@ -1229,17 +1245,17 @@ def submit():
                     try:
                         # Try submitting using ENTER key as it mimics human submission
                         submit_btn.send_keys(Keys.ENTER)
-                        print("[SYSTEM LOGGER] View Result submitted via ENTER key.")
+                        logger.info("[SYSTEM LOGGER] View Result submitted via ENTER key.")
                     except Exception:
                         submit_btn.click()
-                        print("[SYSTEM LOGGER] View Result clicked directly.")
+                        logger.info("[SYSTEM LOGGER] View Result clicked directly.")
                 except Exception as click_err:
-                    print(f"[SYSTEM LOGGER] Direct click failed: {click_err}. Falling back to __doPostBack...")
+                    logger.info(f"[SYSTEM LOGGER] Direct click failed: {click_err}. Falling back to __doPostBack...")
                     driver.execute_script("__doPostBack('ctl00$ContentPlaceHolder1$btnviewresult','')")
 
-                print("[SYSTEM LOGGER] Standard submit succeeded!")
+                logger.info("[SYSTEM LOGGER] Standard submit succeeded!")
             except Exception as selenium_err:
-                print(f"[SYSTEM LOGGER] Standard submit failed: {selenium_err}. Attempting Javascript-based fallback...")
+                logger.info(f"[SYSTEM LOGGER] Standard submit failed: {selenium_err}. Attempting Javascript-based fallback...")
 
                 # Fallback method: set ONLY the captcha text box via JS — do NOT re-touch semester or
                 # roll number fields here. Dispatching events on those fields triggers RGPV's silent
@@ -1249,25 +1265,25 @@ def submit():
                     "if(box) { box.value = arguments[0]; }",
                     captcha
                 )
-                print(f"[SYSTEM LOGGER] Captcha entered via JS fallback. Waiting {session_submit_delay}s before clicking View Result...")
+                logger.info(f"[SYSTEM LOGGER] Captcha entered via JS fallback. Waiting {session_submit_delay}s before clicking View Result...")
                 time.sleep(session_submit_delay)
                 driver.execute_script(
                     "var btn = document.getElementById('ctl00_ContentPlaceHolder1_btnviewresult');"
                     "if(btn) { btn.click(); }"
                 )
-                print("[SYSTEM LOGGER] Javascript fallback submit executed successfully!")
+                logger.info("[SYSTEM LOGGER] Javascript fallback submit executed successfully!")
 
             # Wait dynamic seconds for RGPV server processing/rendering
             post_submit_delay = SPEED_CONFIGS.get(session_speed_mode, SPEED_CONFIGS["normal"])["post_submit"]
-            print(f"[SYSTEM LOGGER] Submission complete. Waiting {post_submit_delay} seconds...")
+            logger.info(f"[SYSTEM LOGGER] Submission complete. Waiting {post_submit_delay} seconds...")
             time.sleep(post_submit_delay)
 
             # Wait for portal response dynamically or statically
             if session_wait_mode == "static":
-                print(f"[SYSTEM LOGGER] Using Static Wait. Sleeping for {session_wait_value} seconds...")
+                logger.info(f"[SYSTEM LOGGER] Using Static Wait. Sleeping for {session_wait_value} seconds...")
                 time.sleep(session_wait_value)
             else:
-                print(f"[SYSTEM LOGGER] Using Smart Dynamic Wait. Max timeout: {session_wait_value} seconds...")
+                logger.info(f"[SYSTEM LOGGER] Using Smart Dynamic Wait. Max timeout: {session_wait_value} seconds...")
                 from selenium.webdriver.support.ui import WebDriverWait
                 
                 def portal_response_received(d):
@@ -1317,27 +1333,20 @@ def submit():
                     # If it loaded very quickly, gradually scale down towards baseline
                     if elapsed < 3.5 and session_wait_value > session_wait_baseline:
                         session_wait_value = max(session_wait_baseline, session_wait_value - 1.0)
-                        print(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Decreased wait value to {session_wait_value}s")
+                        logger.info(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Decreased wait value to {session_wait_value}s")
                 except TimeoutException:
-                    print(f"[SYSTEM LOGGER] Smart wait timeout ({session_wait_value}s) reached.")
-                    try:
-                        diag_path = os.path.join(r"C:\Users\Hp\.gemini\antigravity\brain\a2dfe04c-7012-4fb9-ae6a-32e12c1e1c64", "timeout_screenshot.png")
-                        driver.save_screenshot(diag_path)
-                        print(f"[SYSTEM LOGGER] Diagnostic screenshot saved to {diag_path}")
-                        print(f"[SYSTEM LOGGER] Diagnostic page source snippet:\n{driver.page_source[:3000]}")
-                    except Exception as diag_err:
-                        print(f"[SYSTEM LOGGER] Diagnostic capture failed: {diag_err}")
+                    logger.info(f"[SYSTEM LOGGER] Smart wait timeout ({session_wait_value}s) reached.")
 
                     # ── TIMEOUT RECOVERY: Check page source BEFORE aborting ──────
                     # RGPV server is slow — result may have loaded but not matched our wait conditions
                     try:
                         current_src = driver.page_source
                         if "Total Credit" in current_src or "SGPA" in current_src or "lblRollNoGrading" in current_src:
-                            print("[SYSTEM LOGGER] Timeout recovery: Result data found in page source! Proceeding with parse.")
+                            logger.info("[SYSTEM LOGGER] Timeout recovery: Result data found in page source! Proceeding with parse.")
                             # Don't abort — let the code below parse it naturally
                             # Skip the refresh/abort steps
                         else:
-                            print("[SYSTEM LOGGER] Aborting pending request (no result data found)...")
+                            logger.info("[SYSTEM LOGGER] Aborting pending request (no result data found)...")
                             # Abort any pending postback / page load in the browser to prevent late page updates
                             try:
                                 driver.execute_script("window.stop();")
@@ -1353,14 +1362,14 @@ def submit():
                                 WebDriverWait(driver, 8).until(
                                     EC.element_to_be_clickable((By.ID, "ctl00_ContentPlaceHolder1_drpSemester"))
                                 )
-                                print("[SYSTEM LOGGER] Browser request aborted and page successfully refreshed.")
+                                logger.info("[SYSTEM LOGGER] Browser request aborted and page successfully refreshed.")
                             except Exception as refresh_err:
-                                print(f"[SYSTEM LOGGER] Failed to refresh browser after abort: {refresh_err}")
+                                logger.info(f"[SYSTEM LOGGER] Failed to refresh browser after abort: {refresh_err}")
 
                             # Dynamic Delay Scaling: increase wait limit by 5 seconds (up to 60s)
                             if session_wait_value < 60.0:
                                 session_wait_value = min(60.0, session_wait_value + 5.0)
-                                print(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s due to portal slowdown.")
+                                logger.info(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s due to portal slowdown.")
                             
                             # Return immediately from route to prevent fall-through desyncs
                             return jsonify({
@@ -1369,12 +1378,12 @@ def submit():
                                 "message": "Portal lag detected. Session reset and retrying..."
                             })
                     except Exception as src_check_err:
-                        print(f"[SYSTEM LOGGER] Timeout recovery check failed: {src_check_err}")
+                        logger.info(f"[SYSTEM LOGGER] Timeout recovery check failed: {src_check_err}")
 
                     # Dynamic Delay Scaling (if we didn't return, i.e. success data was found)
                     if session_wait_value < 60.0:
                         session_wait_value = min(60.0, session_wait_value + 5.0)
-                        print(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s due to portal slowdown.")
+                        logger.info(f"[SYSTEM LOGGER] Dynamic Delay Scaling: Increased wait value to {session_wait_value}s due to portal slowdown.")
 
 
         except Exception as e:
@@ -1385,7 +1394,7 @@ def submit():
             alert = Alert(driver)
             alerttext = alert.text
             alert.accept()
-            print(f"[SYSTEM LOGGER] Dismissed submit alert: '{alerttext}'")
+            logger.info(f"[SYSTEM LOGGER] Dismissed submit alert: '{alerttext}'")
             # Save the old captcha src so that the next /api/captcha call knows to wait for it to change
             if old_captcha_elem:
                 try:
@@ -1473,7 +1482,7 @@ def submit():
                                 extracted_grades[sub_code] = grade
 
             # Print layout mapping
-            print(f"\n[SYSTEM LOGGER] MAP RESULT FOR {rollno} -> {extracted_grades}\n")
+            logger.info(f"\n[SYSTEM LOGGER] MAP RESULT FOR {rollno} -> {extracted_grades}\n")
 
             # Post-extraction: remove [N] subjects (Not Applicable)
             _N_PAT = re.compile(r'[\(\[\{]N[\)\]\}]|\bN\b|-N$', re.IGNORECASE)
@@ -1484,7 +1493,7 @@ def submit():
 
             # Fallback if empty
             if not extracted_grades:
-                print("[WARNING] Extraction dictionary was empty. Checking backup markup data...")
+                logger.warning("[WARNING] Extraction dictionary was empty. Checking backup markup data...")
 
             # --- DYNAMIC CSV HEADER EXPANSION FOR MIXED BRANCHES / BRANCH CHANGES ---
             unmatched_portal_subs = []
@@ -1512,7 +1521,7 @@ def submit():
 
 
             if unmatched_portal_subs:
-                print(f"[SYSTEM LOGGER] New subjects detected on portal: {unmatched_portal_subs}. Expanding CSV headers...")
+                logger.info(f"[SYSTEM LOGGER] New subjects detected on portal: {unmatched_portal_subs}. Expanding CSV headers...")
                 for new_sub in unmatched_portal_subs:
                     if new_sub not in session_subjects:
                         session_subjects.append(new_sub)
@@ -1546,7 +1555,7 @@ def submit():
                                 with open(session_filename, "w", newline="", encoding="utf-8") as f:
                                     csv.writer(f).writerows(upgraded_rows)
                     except Exception as file_err:
-                        print(f"[SYSTEM LOGGER] Dynamic CSV header expansion failed: {file_err}")
+                        logger.info(f"[SYSTEM LOGGER] Dynamic CSV header expansion failed: {file_err}")
 
             # Align structural values for matching columns inside generated CSV output file
             grade_values = []
@@ -1598,7 +1607,7 @@ def submit():
                             else:
                                 rows = file_data[1:]
                 except Exception as file_read_err:
-                    print(f"[SYSTEM LOGGER] Duplicate check failed: {file_read_err}")
+                    logger.info(f"[SYSTEM LOGGER] Duplicate check failed: {file_read_err}")
 
             if row_exists:
                 # Rewrite entire file with updated data row
@@ -1613,9 +1622,8 @@ def submit():
                         "error": f"Permission denied writing to '{session_filename}'. Please close the CSV file if it is open in Excel or another program, then try submitting again."
                     })
                 except Exception as file_err:
-                    print(f"[SYSTEM LOGGER] File update failed for '{session_filename}': {file_err}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.info(f"[SYSTEM LOGGER] File update failed for '{session_filename}': {file_err}")
+                    logger.exception("Unhandled exception")
                     return jsonify({
                         "ok": False,
                         "error": f"Failed to update CSV file. Error: {file_err}"
@@ -1631,21 +1639,20 @@ def submit():
                         "error": f"Permission denied writing to '{session_filename}'. Please close the CSV file if it is open in Excel or another program, then try submitting again."
                     })
                 except Exception as file_err:
-                    print(f"[SYSTEM LOGGER] File append failed for '{session_filename}': {file_err}")
-                    import traceback
-                    traceback.print_exc()
+                    logger.info(f"[SYSTEM LOGGER] File append failed for '{session_filename}': {file_err}")
+                    logger.exception("Unhandled exception")
                     return jsonify({
                         "ok": False,
                         "error": f"Failed to append to CSV file. Error: {file_err}"
                     })
 
             try:
-                print(f"[SYSTEM LOGGER] Result resolved. Waiting {session_reset_delay}s before resetting...")
+                logger.info(f"[SYSTEM LOGGER] Result resolved. Waiting {session_reset_delay}s before resetting...")
                 time.sleep(session_reset_delay)
                 reset_results_form(driver, session_program)
-                print("[SYSTEM LOGGER] Form reset complete (Success case).")
+                logger.info("[SYSTEM LOGGER] Form reset complete (Success case).")
             except Exception as reset_err:
-                print(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
+                logger.info(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
 
             return jsonify({
                 "ok": True,
@@ -1663,12 +1670,12 @@ def submit():
         # ── CASE 2: NOT FOUND ─────────────────────────────────────
         elif "Result" in alerttext or "not found" in page_source.lower():
             try:
-                print(f"[SYSTEM LOGGER] Student not found. Waiting {session_reset_delay}s before resetting...")
+                logger.info(f"[SYSTEM LOGGER] Student not found. Waiting {session_reset_delay}s before resetting...")
                 time.sleep(session_reset_delay)
                 reset_results_form(driver, session_program)
-                print("[SYSTEM LOGGER] Form reset complete (Not Found case).")
+                logger.info("[SYSTEM LOGGER] Form reset complete (Not Found case).")
             except Exception as reset_err:
-                print(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
+                logger.info(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
             return jsonify({
                 "ok": True,
                 "status": "not_found",
@@ -1678,10 +1685,10 @@ def submit():
         # ── CASE 3: WRONG CAPTCHA ─────────────────────────────────
         else:
             try:
-                print(f"[SYSTEM LOGGER] Wrong captcha. Waiting {session_reset_delay}s before resetting...")
+                logger.info(f"[SYSTEM LOGGER] Wrong captcha. Waiting {session_reset_delay}s before resetting...")
                 time.sleep(session_reset_delay)
                 reset_results_form(driver, session_program)
-                print("[SYSTEM LOGGER] Form reset complete (Wrong Captcha case).")
+                logger.info("[SYSTEM LOGGER] Form reset complete (Wrong Captcha case).")
             except Exception as e:
                 pass
             return jsonify({
@@ -1690,8 +1697,7 @@ def submit():
                 "message": "Wrong captcha — please try again",
             })
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unhandled exception")
         return jsonify({"ok": False, "error": f"Submit result failed: {e}"})
 
 
@@ -1759,7 +1765,7 @@ def parse_rollsheet():
                                 roll_numbers.add(m.upper())
                 wb.close()
             except Exception as xlsx_err:
-                print(f"[SYSTEM LOGGER] openpyxl failed to parse .xlsx: {xlsx_err}")
+                logger.info(f"[SYSTEM LOGGER] openpyxl failed to parse .xlsx: {xlsx_err}")
                 return jsonify({"ok": False, "error": f"Failed to read .xlsx file: {xlsx_err}. Make sure the file is a valid Excel 2007+ (.xlsx) file."})
 
         elif filename.endswith(".xls"):
@@ -1785,7 +1791,7 @@ def parse_rollsheet():
                     )
                 })
             except Exception as xls_err:
-                print(f"[SYSTEM LOGGER] xlrd failed to parse .xls: {xls_err}")
+                logger.info(f"[SYSTEM LOGGER] xlrd failed to parse .xls: {xls_err}")
                 return jsonify({
                     "ok": False,
                     "error": (
@@ -1836,7 +1842,7 @@ def parse_rollsheet():
                 detected_program = info["program"]
                 detected_branch_name = info["name"]
 
-        print(f"[SYSTEM LOGGER] Roll sheet parsed: {len(sorted_rolls)} rolls found. Prefix='{detected_prefix}', Branch='{detected_branch_name}'")
+        logger.info(f"[SYSTEM LOGGER] Roll sheet parsed: {len(sorted_rolls)} rolls found. Prefix='{detected_prefix}', Branch='{detected_branch_name}'")
 
         return jsonify({
             "ok": True,
@@ -1850,8 +1856,7 @@ def parse_rollsheet():
         })
 
     except Exception as e:
-        import traceback
-        traceback.print_exc()
+        logger.exception("Unhandled exception")
         return jsonify({"ok": False, "error": f"File parsing failed: {e}"})
 
 
