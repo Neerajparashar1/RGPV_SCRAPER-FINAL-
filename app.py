@@ -43,6 +43,7 @@ import time
 import re
 import csv
 import io
+import shutil
 import logging
 import threading
 import functools
@@ -601,6 +602,8 @@ def start_session():
         year = data.get("year", "").strip()
         custom_prefix = data.get("custom_prefix", "").strip()
         custom_filename = data.get("custom_filename", "").strip()
+        existing_filename = data.get("existing_filename", "").strip()
+        existing_folder = data.get("existing_folder", "").strip()
         
         # Read user-configured wait parameters
         session_wait_mode = data.get("wait_mode", "dynamic").strip().lower()
@@ -654,6 +657,21 @@ def start_session():
             except Exception:
                 session_prefix = base_prefix + "24"
 
+        # Use EXE directory for CSV output when running as frozen binary
+        base_dir = get_base_dir()
+
+        # If the user chose to append into an existing sheet (roll-sheet
+        # upload only), resolve it via the same safe path lookup used for
+        # downloads and use that exact file - skip the custom/auto filename
+        # logic below entirely. New rows/subjects merge into it via the
+        # duplicate-detection and dynamic header-expansion logic in submit(),
+        # the same mechanism already verified for branch-changed students.
+        existing_session_filename = None
+        if existing_filename:
+            existing_session_filename = find_csv_file(existing_filename, existing_folder)
+            if not existing_session_filename:
+                return jsonify({"ok": False, "error": f"Selected existing sheet '{existing_filename}' was not found."})
+
         # Construct and sanitize safe absolute filename.
         # If the user gave a custom sheet name (optional, mainly useful for
         # roll-sheet uploads), use that instead of the auto-generated one so
@@ -666,10 +684,7 @@ def start_session():
             raw_filename = f'{BRANCHES[branch_id]["file"]}_sem{sem}_results.csv'
         clean_filename = raw_filename.strip().replace("\r", "").replace("\n", "")
         clean_filename = re.sub(r'[\\/*?:"<>|]', "", clean_filename)
-        
-        # Use EXE directory for CSV output when running as frozen binary
-        base_dir = get_base_dir()
-        
+
         # Map branch to folder name:
         # - CS-Core (Branch 3) -> CS_Core
         # - IT (Branch 4) -> IT
@@ -684,8 +699,10 @@ def start_session():
             folder_name = "CS_Emerging"
         elif branch_id == "mca":
             folder_name = "MCA"
-            
-        if folder_name:
+
+        if existing_session_filename:
+            session_filename = existing_session_filename
+        elif folder_name:
             folder_path = os.path.join(base_dir, folder_name)
             os.makedirs(folder_path, exist_ok=True)
             session_filename = os.path.abspath(os.path.join(folder_path, clean_filename))
@@ -1536,6 +1553,23 @@ def submit():
             if not extracted_grades:
                 logger.warning("[WARNING] Extraction dictionary was empty. Checking backup markup data...")
 
+            # Seed session_subjects with any subject columns the target CSV file
+            # already has (e.g. a session pointed at a pre-existing/appended-into
+            # file, or a fresh list-mode session with an empty session_subjects).
+            # Without this, the header-expansion logic below only knows about
+            # subjects seen so far *in this session* and would treat the file's
+            # own pre-existing subject columns as "not expected", dropping them.
+            _FIXED_COLS = {"ROLL NUMBER", "NAME", "SGPA", "CGPA", "RESULT"}
+            if os.path.exists(session_filename):
+                try:
+                    with open(session_filename, "r", newline="", encoding="utf-8") as f:
+                        existing_header_row = next(csv.reader(f), [])
+                    for col in existing_header_row:
+                        if col.strip().upper() not in _FIXED_COLS and col not in session_subjects:
+                            session_subjects.append(col)
+                except Exception as seed_err:
+                    logger.info(f"[SYSTEM LOGGER] Could not seed session_subjects from existing file header: {seed_err}")
+
             # --- DYNAMIC CSV HEADER EXPANSION FOR MIXED BRANCHES / BRANCH CHANGES ---
             unmatched_portal_subs = []
             for portal_code, portal_grade in extracted_grades.items():
@@ -1968,6 +2002,43 @@ def download_specific_file(filename):
         return jsonify({"ok": False, "error": f"File '{filename}' not found."}), 404
     except Exception as e:
         return jsonify({"ok": False, "error": str(e)})
+
+
+# ── Delete (soft-delete to trash) a CSV File ──────────────────
+@app.route("/api/delete_file", methods=["POST"])
+def delete_file():
+    """
+    Moves a result sheet into a _trash folder instead of permanently
+    deleting it, so an accidental delete can still be recovered manually.
+    """
+    try:
+        data = request.json or {}
+        filename = str(data.get("filename", "")).strip()
+        folder = str(data.get("folder", "")).strip()
+        if not filename:
+            return jsonify({"ok": False, "error": "Filename is required."})
+
+        filepath = find_csv_file(filename, folder)
+        if not filepath or not os.path.exists(filepath):
+            return jsonify({"ok": False, "error": f"File '{filename}' not found."})
+
+        base_dir = get_base_dir()
+        trash_subfolder = folder if folder and folder != "Root" else ""
+        trash_dir = os.path.join(base_dir, "_trash", trash_subfolder)
+        os.makedirs(trash_dir, exist_ok=True)
+
+        dest_path = os.path.join(trash_dir, filename)
+        if os.path.exists(dest_path):
+            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            name_no_ext = filename[:-4] if filename.lower().endswith(".csv") else filename
+            dest_path = os.path.join(trash_dir, f"{name_no_ext}_{timestamp}.csv")
+
+        shutil.move(filepath, dest_path)
+        logger.info(f"[SYSTEM LOGGER] Moved '{filepath}' to trash at '{dest_path}'.")
+        return jsonify({"ok": True, "message": f"Moved '{filename}' to trash."})
+    except Exception as e:
+        logger.exception("Unhandled exception")
+        return jsonify({"ok": False, "error": f"Delete failed: {e}"})
 
 
 # ── Get Parsed CSV Data as JSON ────────────────────────────────

@@ -23,6 +23,7 @@ IT/
 MCA/
 results/
 results_page_source.html
+_trash/
 
 # IDE
 .idea/

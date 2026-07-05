@@ -9,6 +9,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Space+Mono:ital,wght@0,400;0,700;1,400;1,700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.28/jspdf.plugin.autotable.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
 </head>
 <body>
@@ -243,17 +244,40 @@
           </select>
         </div>
 
-        <!-- Optional custom sheet name (separate CSV file) -->
+        <!-- Optional custom sheet name / append-to-existing (separate CSV file) -->
         <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 6px;">
           <input type="checkbox" id="custom-filename-chk" style="cursor: pointer; width: 12px; height: 12px; accent-color: var(--accent); margin-bottom: 0;" onchange="toggleCustomFilename()"/>
-          <label for="custom-filename-chk" style="margin-bottom: 0; font-size: 0.65rem; cursor: pointer; color: var(--accent2); user-select: none;">Save as a custom-named sheet</label>
+          <label for="custom-filename-chk" style="margin-bottom: 0; font-size: 0.65rem; cursor: pointer; color: var(--accent2); user-select: none;">Save into a specific sheet</label>
         </div>
         <div id="custom-filename-container" style="display: none; margin-bottom: 12px;">
-          <label style="font-size: 0.68rem;">Custom Sheet Name</label>
-          <input type="text" id="custom-filename-val" placeholder="e.g. branch_changed_students" style="margin-bottom: 4px;"/>
-          <span style="font-size: 0.62rem; color: var(--muted); font-family: var(--mono); display: block; line-height: 1.4;">
-            Creates a separate .csv file with this name instead of the default branch/semester file.
-          </span>
+          <div style="display: flex; gap: 12px; margin-bottom: 8px; font-family: var(--mono); font-size: 0.65rem;">
+            <label style="margin-bottom: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text);">
+              <input type="radio" name="sheet-target-mode" id="sheet-target-new" value="new" checked onchange="toggleSheetTargetMode()" style="cursor: pointer; margin-bottom: 0; accent-color: var(--accent);"/>
+              New sheet
+            </label>
+            <label style="margin-bottom: 0; display: flex; align-items: center; gap: 4px; cursor: pointer; color: var(--text);">
+              <input type="radio" name="sheet-target-mode" id="sheet-target-existing" value="existing" onchange="toggleSheetTargetMode()" style="cursor: pointer; margin-bottom: 0; accent-color: var(--accent);"/>
+              Append to existing
+            </label>
+          </div>
+
+          <div id="sheet-target-new-container">
+            <label style="font-size: 0.68rem;">Custom Sheet Name</label>
+            <input type="text" id="custom-filename-val" placeholder="e.g. branch_changed_students" style="margin-bottom: 4px;"/>
+            <span style="font-size: 0.62rem; color: var(--muted); font-family: var(--mono); display: block; line-height: 1.4;">
+              Creates a separate .csv file with this name instead of the default branch/semester file.
+            </span>
+          </div>
+
+          <div id="sheet-target-existing-container" style="display: none;">
+            <label style="font-size: 0.68rem;">Existing Sheet</label>
+            <select id="existing-filename-select" style="margin-bottom: 4px;">
+              <option value="">Loading previous sheets...</option>
+            </select>
+            <span style="font-size: 0.62rem; color: var(--muted); font-family: var(--mono); display: block; line-height: 1.4;">
+              New rows are appended into the selected file. Existing rows are never overwritten.
+            </span>
+          </div>
         </div>
 
       </div>
@@ -381,9 +405,12 @@
     </div>
 
     <!-- EXPORT DOWNLOAD CONTROLS -->
-    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px;">
       <button class="btn btn-download" onclick="downloadCSV()" id="btn-dl" style="opacity:.4;pointer-events:none; margin-bottom: 0;">
         ↓ CSV
+      </button>
+      <button class="btn btn-download" onclick="downloadExcel()" id="btn-xls" style="opacity:.4;pointer-events:none; margin-bottom: 0; color: var(--warn); border-color: var(--warn);">
+        ↓ Excel
       </button>
       <button class="btn btn-download" onclick="downloadPDF()" id="btn-pdf" style="opacity:.4;pointer-events:none; margin-bottom: 0; color: var(--accent2); border-color: var(--accent2);">
         ↓ PDF

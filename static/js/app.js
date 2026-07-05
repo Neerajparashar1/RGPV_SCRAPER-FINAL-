@@ -98,6 +98,36 @@
     const chk = document.getElementById('custom-filename-chk');
     const container = document.getElementById('custom-filename-container');
     container.style.display = chk.checked ? 'block' : 'none';
+    if (chk.checked && document.getElementById('sheet-target-existing').checked) {
+      populateExistingSheetSelect();
+    }
+  }
+
+  function toggleSheetTargetMode() {
+    const isExisting = document.getElementById('sheet-target-existing').checked;
+    document.getElementById('sheet-target-new-container').style.display = isExisting ? 'none' : 'block';
+    document.getElementById('sheet-target-existing-container').style.display = isExisting ? 'block' : 'none';
+    if (isExisting) {
+      populateExistingSheetSelect();
+    }
+  }
+
+  async function populateExistingSheetSelect() {
+    const select = document.getElementById('existing-filename-select');
+    select.innerHTML = '<option value="">Loading previous sheets...</option>';
+    try {
+      const res = await fetch('/api/previous_files');
+      const data = await res.json();
+      if (data.ok && data.files && data.files.length > 0) {
+        select.innerHTML = data.files.map(f =>
+          `<option value="${f.name}|${f.folder}">${f.folder} / ${f.name}</option>`
+        ).join('');
+      } else {
+        select.innerHTML = '<option value="">No previous sheets found</option>';
+      }
+    } catch (err) {
+      select.innerHTML = '<option value="">Failed to load previous sheets</option>';
+    }
   }
 
   function toggleAdvancedSettings() {
@@ -1015,9 +1045,19 @@
         payload.roll_list = state.rollList;
         const customFilenameChk = document.getElementById('custom-filename-chk');
         if (customFilenameChk && customFilenameChk.checked) {
-          const customFilename = document.getElementById('custom-filename-val').value.trim();
-          if (customFilename) {
-            payload.custom_filename = customFilename;
+          const useExisting = document.getElementById('sheet-target-existing').checked;
+          if (useExisting) {
+            const existingVal = document.getElementById('existing-filename-select').value;
+            if (existingVal) {
+              const [existingName, existingFolder] = existingVal.split('|');
+              payload.existing_filename = existingName;
+              payload.existing_folder = existingFolder;
+            }
+          } else {
+            const customFilename = document.getElementById('custom-filename-val').value.trim();
+            if (customFilename) {
+              payload.custom_filename = customFilename;
+            }
           }
         }
       }
@@ -1331,6 +1371,8 @@
         updateStepsProgress();
         document.getElementById('btn-dl').style.opacity = '1';
         document.getElementById('btn-dl').style.pointerEvents = 'auto';
+        document.getElementById('btn-xls').style.opacity = '1';
+        document.getElementById('btn-xls').style.pointerEvents = 'auto';
         document.getElementById('btn-pdf').style.opacity = '1';
         document.getElementById('btn-pdf').style.pointerEvents = 'auto';
         loadPreviousSheets();
@@ -1382,6 +1424,8 @@
     if (on) {
       document.getElementById('btn-dl').style.opacity = '1';
       document.getElementById('btn-dl').style.pointerEvents = 'auto';
+      document.getElementById('btn-xls').style.opacity = '1';
+      document.getElementById('btn-xls').style.pointerEvents = 'auto';
       document.getElementById('btn-pdf').style.opacity = '1';
       document.getElementById('btn-pdf').style.pointerEvents = 'auto';
     }
@@ -1409,28 +1453,42 @@
           else if (file.folder === "CS_Emerging") folderBadgeColor = "var(--warn)";
 
           html += `
-            <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; background: rgba(15, 23, 42, 0.02); border: 1px solid var(--border); border-radius: 8px; transition: background 0.2s;">
-              <div style="display: flex; flex-direction: column; gap: 2px; max-width: 65%;">
+            <div style="display: flex; flex-direction: column; gap: 8px; padding: 8px 10px; background: rgba(15, 23, 42, 0.02); border: 1px solid var(--border); border-radius: 8px; transition: background 0.2s;">
+              <div style="display: flex; flex-direction: column; gap: 2px;">
                 <span style="font-weight: 700; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.7rem;" title="${file.name}">${file.name}</span>
                 <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                   <span style="font-size: 0.62rem; color: var(--muted);">${file.size} · ${file.mtime}</span>
                   <span style="font-size: 0.58rem; padding: 1px 6px; border-radius: 4px; color: #fff; background: ${folderBadgeColor}; font-weight: 700; font-family: var(--mono);">${file.folder}</span>
                 </div>
               </div>
-              <div style="display: flex; gap: 6px;">
-                <button onclick="window.location.href='/api/download_file/${file.name}?folder=${file.folder}'" 
-                        style="background: transparent; border: 1px solid var(--border); border-radius: 6px; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--accent); cursor: pointer; transition: all 0.2s; font-size: 0.8rem;" 
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                <button onclick="window.location.href='/api/download_file/${file.name}?folder=${file.folder}'"
+                        style="background: transparent; border: 1px solid var(--border); border-radius: 6px; width: 30px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--accent); cursor: pointer; transition: all 0.2s; font-size: 0.8rem; flex-shrink: 0;"
                         title="Download CSV"
                         onmouseover="this.style.background='rgba(16, 185, 129, 0.08)'; this.style.borderColor='var(--accent)'"
                         onmouseout="this.style.background='transparent'; this.style.borderColor='var(--border)'">
                   ↓
                 </button>
-                <button onclick="convertCSVToPDF('${file.name}', '${file.folder}')" 
-                        style="background: transparent; border: 1px solid var(--border); border-radius: 6px; width: 36px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--accent2); cursor: pointer; transition: all 0.2s; font-size: 0.6rem; font-weight: 700; font-family: var(--mono);" 
+                <button onclick="convertCSVToExcel('${file.name}', '${file.folder}')"
+                        style="background: transparent; border: 1px solid var(--border); border-radius: 6px; width: 40px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--warn); cursor: pointer; transition: all 0.2s; font-size: 0.6rem; font-weight: 700; font-family: var(--mono); flex-shrink: 0;"
+                        title="Convert to Excel"
+                        onmouseover="this.style.background='rgba(251, 191, 36, 0.08)'; this.style.borderColor='var(--warn)'"
+                        onmouseout="this.style.background='transparent'; this.style.borderColor='var(--border)'">
+                  XLS
+                </button>
+                <button onclick="convertCSVToPDF('${file.name}', '${file.folder}')"
+                        style="background: transparent; border: 1px solid var(--border); border-radius: 6px; width: 40px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--accent2); cursor: pointer; transition: all 0.2s; font-size: 0.6rem; font-weight: 700; font-family: var(--mono); flex-shrink: 0;"
                         title="Convert to PDF"
                         onmouseover="this.style.background='rgba(14, 165, 233, 0.08)'; this.style.borderColor='var(--accent2)'"
                         onmouseout="this.style.background='transparent'; this.style.borderColor='var(--border)'">
                   PDF
+                </button>
+                <button onclick="deleteSheet('${file.name}', '${file.folder}')"
+                        style="background: rgba(244, 63, 94, 0.06); border: 1px solid rgba(244, 63, 94, 0.25); border-radius: 6px; width: 40px; height: 26px; display: flex; align-items: center; justify-content: center; color: var(--fail); cursor: pointer; transition: all 0.2s; font-size: 0.9rem; flex-shrink: 0; margin-left: auto;"
+                        title="Delete (moves to trash, recoverable)"
+                        onmouseover="this.style.background='rgba(244, 63, 94, 0.16)'; this.style.borderColor='var(--fail)'"
+                        onmouseout="this.style.background='rgba(244, 63, 94, 0.06)'; this.style.borderColor='rgba(244, 63, 94, 0.25)'">
+                  🗑
                 </button>
               </div>
             </div>
@@ -1445,40 +1503,70 @@
     }
   }
 
-  // ── GENERATE AND DOWNLOAD PDF REPORT ──────────
-  async function downloadPDF() {
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF('l', 'mm', 'a4'); // Landscape A4 is mathematically necessary for 10+ columns
-    
-    // Header Style
-    doc.setFont("Helvetica", "bold");
-    doc.setFontSize(16);
-    doc.setTextColor(15, 23, 42); // Deep Slate Charcoal
-    doc.text("RGPV Result Scraper - Session Report", 10, 12);
-    
-    // Metadata block
-    doc.setFont("Helvetica", "normal");
-    doc.setFontSize(9);
-    doc.setTextColor(100, 116, 139); // Tech Cool Gray
-    
-    const isUpload = isUploadMode();
-    const branchSelect = isUpload ? document.getElementById("upload-branch-select") : document.getElementById("branch");
-    const branchText = branchSelect ? branchSelect.options[branchSelect.selectedIndex].text : "Custom Branch";
-    const semSelect = isUpload ? document.getElementById("sem-upload") : document.getElementById("sem");
-    const semText = semSelect ? semSelect.options[semSelect.selectedIndex].text : "Custom Sem";
-    const dateText = new Date().toLocaleString('en-US', { hour12: true });
+  // ── Delete a saved sheet (moves it to trash, not permanent) ──
+  async function deleteSheet(filename, folder) {
+    if (!confirm(`Move '${filename}' to trash? You can still recover it manually from the _trash folder.`)) {
+      return;
+    }
+    try {
+      const res = await fetch('/api/delete_file', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ filename, folder })
+      });
+      const data = await res.json();
+      if (data.ok) {
+        log(`Moved '${filename}' to trash`, 'ok');
+        loadPreviousSheets();
+      } else {
+        log(`Delete failed: ${data.error}`, 'err');
+      }
+    } catch (err) {
+      log(`Delete failed: ${err.message}`, 'err');
+    }
+  }
 
-    
-    doc.text(`Branch: ${branchText}  |  Semester: ${semText}  |  Generated on: ${dateText}`, 10, 17);
-    
-    // Extract dynamic headers from DOM
+  // ── Shared PDF layout scaling ──────────────────
+  // Computes font size / column widths proportionally to the actual number of
+  // subject columns, instead of a fixed width that only worked up to ~12-15
+  // columns. Dynamic subject detection (branch-changed students, mixed-branch
+  // uploads) can legitimately grow a sheet to 20+ subject columns, which used
+  // to overflow the A4 landscape page and wrap subject-code headers ugly
+  // across multiple lines.
+  function computePdfLayout(totalCols) {
+    const PAGE_USABLE_WIDTH = 277; // A4 landscape (297mm) minus 10mm margins each side
+    const FIXED_RESERVED = 7 + 22 + 30 + 11 + 11 + 14; // index + roll + name + sgpa + cgpa + result
+    const numSubjectCols = Math.max(1, totalCols - 6);
+    const available = Math.max(numSubjectCols * 6, PAGE_USABLE_WIDTH - FIXED_RESERVED);
+    const subWidth = Math.max(6, available / numSubjectCols);
+
+    let fontSize, headFontSize, cellPadding;
+    if (subWidth >= 11) {
+      fontSize = 7.0; headFontSize = 7.4; cellPadding = 1.2;
+    } else if (subWidth >= 9) {
+      fontSize = 6.6; headFontSize = 7.0; cellPadding = 1.0;
+    } else if (subWidth >= 7.5) {
+      fontSize = 6.0; headFontSize = 6.5; cellPadding = 0.8;
+    } else if (subWidth >= 6) {
+      fontSize = 5.5; headFontSize = 6.0; cellPadding = 0.6;
+    } else {
+      fontSize = 5.0; headFontSize = 5.5; cellPadding = 0.5;
+    }
+
+    const sgpaWidth = subWidth >= 9 ? 12 : (subWidth >= 7.5 ? 11 : 10);
+    const resultWidth = subWidth >= 9 ? 15 : (subWidth >= 7.5 ? 13 : 12);
+
+    return { fontSize, headFontSize, cellPadding, subWidth, sgpaWidth, resultWidth };
+  }
+
+  // ── Shared live-table extraction (used by PDF and Excel export) ──
+  function extractLiveTableRows() {
     const headerCells = Array.from(document.querySelectorAll("#table-header-row th")).map(th => th.textContent.trim());
-    
-    // Extract dynamic rows from DOM
+
     const rowElements = Array.from(document.querySelectorAll("#result-tbody tr"));
     const bodyRows = [];
     const seenRolls = new Set();
-    
+
     rowElements.forEach(tr => {
       if (tr.querySelector("td.roll")) {
         // Active student data row
@@ -1486,7 +1574,7 @@
            const badge = td.querySelector(".badge");
            return badge ? badge.textContent.trim() : td.textContent.trim();
         });
-        
+
         if (rowCells.length > 1) {
           const roll = rowCells[1].trim().toUpperCase();
           if (!seenRolls.has(roll)) {
@@ -1504,7 +1592,7 @@
             seenRolls.add(rollUpper);
             const descCell = tr.cells[2];
             const desc = descCell ? descCell.textContent.trim() : "Roll number not active on portal";
-            
+
             const emptyRow = [bodyRows.length + 1, roll, desc];
             while (emptyRow.length < headerCells.length) {
               emptyRow.push("-");
@@ -1520,30 +1608,51 @@
       row[0] = idx + 1;
     });
 
-    // Auto-scale fonts and paddings based on total columns
-    const totalCols = headerCells.length;
-    let fontSize = 7.0;
-    let headFontSize = 7.4;
-    let cellPadding = 1.2;
-    let subWidth = 12;
-    let sgpaWidth = 13;
-    let resultWidth = 16;
-    
-    if (totalCols > 12) {
-      fontSize = 6.0;
-      headFontSize = 6.5;
-      cellPadding = 0.8;
-      subWidth = 9.5;
-      sgpaWidth = 11;
-      resultWidth = 13;
-    } else if (totalCols > 8) {
-      fontSize = 6.6;
-      headFontSize = 7.0;
-      cellPadding = 1.0;
-      subWidth = 11;
-      sgpaWidth = 12;
-      resultWidth = 15;
+    return { headerCells, bodyRows };
+  }
+
+  function getLiveReportMeta() {
+    const isUpload = isUploadMode();
+    const branchSelect = isUpload ? document.getElementById("upload-branch-select") : document.getElementById("branch");
+    const branchText = branchSelect ? branchSelect.options[branchSelect.selectedIndex].text : "Custom Branch";
+    const semSelect = isUpload ? document.getElementById("sem-upload") : document.getElementById("sem");
+    const semText = semSelect ? semSelect.options[semSelect.selectedIndex].text : "Custom Sem";
+    const semValue = isUpload ? document.getElementById("sem-upload").value : document.getElementById("sem").value;
+    const dateText = new Date().toLocaleString('en-US', { hour12: true });
+    let cleanBranch = "Report";
+    if (branchText.includes("·")) {
+      cleanBranch = branchText.split("·")[1].trim().replace(/\s+/g, "_");
+    } else {
+      cleanBranch = branchText.trim().replace(/\s+/g, "_");
     }
+    return { branchText, semText, semValue, dateText, cleanBranch };
+  }
+
+  // ── GENERATE AND DOWNLOAD PDF REPORT ──────────
+  async function downloadPDF() {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF('l', 'mm', 'a4'); // Landscape A4 is mathematically necessary for 10+ columns
+
+    // Header Style
+    doc.setFont("Helvetica", "bold");
+    doc.setFontSize(16);
+    doc.setTextColor(15, 23, 42); // Deep Slate Charcoal
+    doc.text("RGPV Result Scraper - Session Report", 10, 12);
+
+    // Metadata block
+    doc.setFont("Helvetica", "normal");
+    doc.setFontSize(9);
+    doc.setTextColor(100, 116, 139); // Tech Cool Gray
+
+    const { branchText, semText, dateText } = getLiveReportMeta();
+
+    doc.text(`Branch: ${branchText}  |  Semester: ${semText}  |  Generated on: ${dateText}`, 10, 17);
+
+    const { headerCells, bodyRows } = extractLiveTableRows();
+
+    // Auto-scale fonts and paddings proportionally to total columns
+    const totalCols = headerCells.length;
+    const { fontSize, headFontSize, cellPadding, subWidth, sgpaWidth, resultWidth } = computePdfLayout(totalCols);
 
     const columnStyles = {
       0: { cellWidth: 7 }, // Compact Index
@@ -1621,17 +1730,126 @@
     });
     
     // Format filename matching CSV naming conventions
-    let cleanBranch = "Report";
-    if (branchText.includes("·")) {
-      cleanBranch = branchText.split("·")[1].trim().replace(/\s+/g, "_");
-    } else {
-      cleanBranch = branchText.trim().replace(/\s+/g, "_");
-    }
-    const semValue = isUpload ? document.getElementById("sem-upload").value : document.getElementById("sem").value;
+    const { cleanBranch, semValue } = getLiveReportMeta();
     const filename = `${cleanBranch}_sem${semValue}_report.pdf`;
-    
+
     doc.save(filename);
     log(`PDF downloaded successfully: ${filename}`, 'ok');
+  }
+
+  // ── Shared Excel styling helper (used by live + previous-file export) ──
+  async function buildStyledExcelBuffer(headerCells, bodyRows, sheetTitle) {
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet(sheetTitle || 'Results');
+
+    sheet.addRow(headerCells);
+    bodyRows.forEach(r => sheet.addRow(r));
+
+    const thinBorder = {
+      top: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      left: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      bottom: { style: 'thin', color: { argb: 'FFCBD5E1' } },
+      right: { style: 'thin', color: { argb: 'FFCBD5E1' } }
+    };
+
+    // Header row styling
+    const headerRow = sheet.getRow(1);
+    headerRow.eachCell(cell => {
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF0F172A' } };
+      cell.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      cell.alignment = { horizontal: 'center', vertical: 'middle' };
+      cell.border = thinBorder;
+    });
+    headerRow.height = 22;
+    sheet.views = [{ state: 'frozen', ySplit: 1 }];
+
+    // Body row styling + PASS/FAIL coloring on the Result column (last column)
+    const resultColIdx = headerCells.length;
+    for (let i = 2; i <= sheet.rowCount; i++) {
+      const row = sheet.getRow(i);
+      row.eachCell(cell => {
+        cell.border = thinBorder;
+        cell.alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      const resultCell = row.getCell(resultColIdx);
+      const val = String(resultCell.value ?? '').trim().toUpperCase();
+      if (val === 'PASS') {
+        resultCell.font = { bold: true, color: { argb: 'FF10B981' } };
+      } else if (val.includes('FAIL') || val.includes('BACKLOG')) {
+        resultCell.font = { bold: true, color: { argb: 'FFEF4444' } };
+      }
+    }
+
+    // Auto-size columns based on content length
+    headerCells.forEach((h, idx) => {
+      let maxLen = String(h ?? '').length;
+      bodyRows.forEach(r => {
+        const len = String(r[idx] ?? '').length;
+        if (len > maxLen) maxLen = len;
+      });
+      sheet.getColumn(idx + 1).width = Math.min(32, Math.max(9, maxLen + 3));
+    });
+
+    return workbook.xlsx.writeBuffer();
+  }
+
+  function saveExcelBuffer(buffer, filename) {
+    const blob = new Blob([buffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    window.URL.revokeObjectURL(url);
+  }
+
+  // ── GENERATE AND DOWNLOAD EXCEL REPORT (live session) ──
+  async function downloadExcel() {
+    const { headerCells, bodyRows } = extractLiveTableRows();
+    const { cleanBranch, semValue } = getLiveReportMeta();
+    const buffer = await buildStyledExcelBuffer(headerCells, bodyRows, 'Results');
+    const filename = `${cleanBranch}_sem${semValue}_report.xlsx`;
+    saveExcelBuffer(buffer, filename);
+    log(`Excel downloaded successfully: ${filename}`, 'ok');
+  }
+
+  // ── CONVERT PREVIOUS CSV TO EXCEL REPORT ──────────
+  async function convertCSVToExcel(filename, folder = '') {
+    log(`Converting ${filename} to styled Excel...`, 'info');
+    try {
+      const res = await fetch(`/api/get_csv_data/${filename}?folder=${folder}`);
+      if (!res.ok) throw new Error("Failed to parse CSV file");
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || 'Failed to read file');
+
+      // Dedupe rows by Roll Number, same approach as convertCSVToPDF
+      const headerCells = data.headers;
+      let rollIdx = 0;
+      if (headerCells && headerCells.length > 1) {
+        const idx = headerCells.findIndex(h => h.trim().toUpperCase() === "ROLL NUMBER");
+        if (idx !== -1) rollIdx = idx;
+      }
+      const seenRolls = new Set();
+      const bodyRows = [];
+      data.rows.forEach(row => {
+        if (row && row.length > rollIdx) {
+          const roll = row[rollIdx].trim().toUpperCase();
+          if (!seenRolls.has(roll)) {
+            seenRolls.add(roll);
+            bodyRows.push(row);
+          }
+        }
+      });
+
+      const buffer = await buildStyledExcelBuffer(headerCells, bodyRows, 'Results');
+      const outName = filename.replace(/\.csv$/i, '') + '.xlsx';
+      saveExcelBuffer(buffer, outName);
+      log(`Excel downloaded successfully: ${outName}`, 'ok');
+    } catch (err) {
+      log(`Excel conversion failed: ${err.message}`, 'err');
+    }
   }
 
   // ── CONVERT PREVIOUS CSV TO PDF REPORT ──────────
@@ -1720,30 +1938,9 @@
           row[0] = idx + 1;
         });
         
-        // Auto-scale fonts and paddings based on total columns
+        // Auto-scale fonts and paddings proportionally to total columns
         const totalCols = finalHeaders.length;
-        let fontSize = 7.0;
-        let headFontSize = 7.4;
-        let cellPadding = 1.2;
-        let subWidth = 12;
-        let sgpaWidth = 13;
-        let resultWidth = 16;
-        
-        if (totalCols > 12) {
-          fontSize = 6.0;
-          headFontSize = 6.5;
-          cellPadding = 0.8;
-          subWidth = 9.5;
-          sgpaWidth = 11;
-          resultWidth = 13;
-        } else if (totalCols > 8) {
-          fontSize = 6.6;
-          headFontSize = 7.0;
-          cellPadding = 1.0;
-          subWidth = 11;
-          sgpaWidth = 12;
-          resultWidth = 15;
-        }
+        const { fontSize, headFontSize, cellPadding, subWidth, sgpaWidth, resultWidth } = computePdfLayout(totalCols);
 
         const columnStyles = {
           0: { cellWidth: 7 }, // Compact Index
