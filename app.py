@@ -1684,41 +1684,34 @@ def submit():
                 except Exception as file_read_err:
                     logger.info(f"[SYSTEM LOGGER] Duplicate check failed: {file_read_err}")
 
-            if row_exists:
-                # Rewrite entire file with updated data row
-                try:
-                    with open(session_filename, "w", newline="", encoding="utf-8") as f:
-                        writer = csv.writer(f)
-                        writer.writerow(headers)
-                        writer.writerows(rows)
-                except PermissionError:
-                    return jsonify({
+            if not row_exists:
+                rows.append([rollno, name] + grade_values + [sgpa, cgpa, result])
+
+            # Keep the sheet ordered: same-prefix rolls in ascending sequence first,
+            # any roll with a different prefix (branch-changed / different-branch
+            # student) sorted to the end, also in ascending sequence within itself.
+            def _sort_key(row):
+                row_roll = row[0].strip().upper() if row else ""
+                same_prefix = bool(session_prefix) and row_roll.startswith(session_prefix.upper())
+                return (0 if same_prefix else 1, row_roll)
+            rows.sort(key=_sort_key)
+
+            try:
+                with open(session_filename, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers if headers else ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"])
+                    writer.writerows(rows)
+            except PermissionError:
+                return jsonify({
+                    "ok": False,
+                    "error": f"Permission denied writing to '{session_filename}'. Please close the CSV file if it is open in Excel or another program, then try submitting again."
+                })
+            except Exception as file_err:
+                logger.info(f"[SYSTEM LOGGER] File write failed for '{session_filename}': {file_err}")
+                logger.exception("Unhandled exception")
+                return jsonify({
                         "ok": False,
-                        "error": f"Permission denied writing to '{session_filename}'. Please close the CSV file if it is open in Excel or another program, then try submitting again."
-                    })
-                except Exception as file_err:
-                    logger.info(f"[SYSTEM LOGGER] File update failed for '{session_filename}': {file_err}")
-                    logger.exception("Unhandled exception")
-                    return jsonify({
-                        "ok": False,
-                        "error": f"Failed to update CSV file. Error: {file_err}"
-                    })
-            else:
-                # Standard append if roll number is new
-                try:
-                    with open(session_filename, "a", newline="", encoding="utf-8") as f:
-                        csv.writer(f).writerow([rollno, name] + grade_values + [sgpa, cgpa, result])
-                except PermissionError:
-                    return jsonify({
-                        "ok": False,
-                        "error": f"Permission denied writing to '{session_filename}'. Please close the CSV file if it is open in Excel or another program, then try submitting again."
-                    })
-                except Exception as file_err:
-                    logger.info(f"[SYSTEM LOGGER] File append failed for '{session_filename}': {file_err}")
-                    logger.exception("Unhandled exception")
-                    return jsonify({
-                        "ok": False,
-                        "error": f"Failed to append to CSV file. Error: {file_err}"
+                        "error": f"Failed to write to CSV file. Error: {file_err}"
                     })
 
             try:

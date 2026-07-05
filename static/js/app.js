@@ -1603,6 +1603,18 @@
       }
     });
 
+    // Keep same-prefix rolls in ascending sequence first, any different-prefix
+    // roll (branch-changed / different-branch student) sorted to the end.
+    const prefix = (state.sessionPrefix || "").toUpperCase();
+    bodyRows.sort((a, b) => {
+      const rollA = String(a[1] || "").toUpperCase();
+      const rollB = String(b[1] || "").toUpperCase();
+      const sameA = prefix && rollA.startsWith(prefix) ? 0 : 1;
+      const sameB = prefix && rollB.startsWith(prefix) ? 0 : 1;
+      if (sameA !== sameB) return sameA - sameB;
+      return rollA < rollB ? -1 : (rollA > rollB ? 1 : 0);
+    });
+
     // Re-index row numbering sequentially from 1 to N
     bodyRows.forEach((row, idx) => {
       row[0] = idx + 1;
