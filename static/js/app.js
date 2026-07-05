@@ -83,7 +83,7 @@
     const chk = document.getElementById('manual-batch-chk');
     const standardSelect = document.getElementById('batch-year-select');
     const manualContainer = document.getElementById('manual-batch-container');
-    
+
     if (chk.checked) {
       standardSelect.style.display = 'none';
       manualContainer.style.display = 'block';
@@ -92,6 +92,12 @@
       manualContainer.style.display = 'none';
     }
     updateManualPrefixPreview();
+  }
+
+  function toggleCustomFilename() {
+    const chk = document.getElementById('custom-filename-chk');
+    const container = document.getElementById('custom-filename-container');
+    container.style.display = chk.checked ? 'block' : 'none';
   }
 
   function toggleAdvancedSettings() {
@@ -1007,6 +1013,13 @@
       };
       if (isUploadMode()) {
         payload.roll_list = state.rollList;
+        const customFilenameChk = document.getElementById('custom-filename-chk');
+        if (customFilenameChk && customFilenameChk.checked) {
+          const customFilename = document.getElementById('custom-filename-val').value.trim();
+          if (customFilename) {
+            payload.custom_filename = customFilename;
+          }
+        }
       }
 
 

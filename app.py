@@ -600,6 +600,7 @@ def start_session():
         sem = data.get("sem", "").strip()
         year = data.get("year", "").strip()
         custom_prefix = data.get("custom_prefix", "").strip()
+        custom_filename = data.get("custom_filename", "").strip()
         
         # Read user-configured wait parameters
         session_wait_mode = data.get("wait_mode", "dynamic").strip().lower()
@@ -653,8 +654,16 @@ def start_session():
             except Exception:
                 session_prefix = base_prefix + "24"
 
-        # Construct and sanitize safe absolute filename
-        raw_filename = f'{BRANCHES[branch_id]["file"]}_sem{sem}_results.csv'
+        # Construct and sanitize safe absolute filename.
+        # If the user gave a custom sheet name (optional, mainly useful for
+        # roll-sheet uploads), use that instead of the auto-generated one so
+        # a separate file is created under it.
+        if custom_filename:
+            raw_filename = custom_filename
+            if not raw_filename.lower().endswith(".csv"):
+                raw_filename += ".csv"
+        else:
+            raw_filename = f'{BRANCHES[branch_id]["file"]}_sem{sem}_results.csv'
         clean_filename = raw_filename.strip().replace("\r", "").replace("\n", "")
         clean_filename = re.sub(r'[\\/*?:"<>|]', "", clean_filename)
         
@@ -1904,23 +1913,22 @@ def previous_files():
                 continue
             for f in os.listdir(folder_path):
                 if f.endswith(".csv"):
-                    if "results" in f or "result" in f:
-                        filepath = os.path.join(folder_path, f)
-                        if os.path.isfile(filepath):
-                            stat = os.stat(filepath)
-                            mtime = stat.st_mtime
-                            size = stat.st_size
-                            
-                            size_str = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} Bytes"
-                            mtime_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))
-                            
-                            files.append({
-                                "name": f,
-                                "folder": folder if folder else "Root",
-                                "size": size_str,
-                                "mtime": mtime_str,
-                                "raw_mtime": mtime
-                            })
+                    filepath = os.path.join(folder_path, f)
+                    if os.path.isfile(filepath):
+                        stat = os.stat(filepath)
+                        mtime = stat.st_mtime
+                        size = stat.st_size
+
+                        size_str = f"{size / 1024:.1f} KB" if size >= 1024 else f"{size} Bytes"
+                        mtime_str = time.strftime('%Y-%m-%d %H:%M', time.localtime(mtime))
+
+                        files.append({
+                            "name": f,
+                            "folder": folder if folder else "Root",
+                            "size": size_str,
+                            "mtime": mtime_str,
+                            "raw_mtime": mtime
+                        })
         # Sort by newest first
         files.sort(key=lambda x: x["raw_mtime"], reverse=True)
         return jsonify({"ok": True, "files": files})
