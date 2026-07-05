@@ -1502,17 +1502,34 @@ def submit():
                         sub_code = ""
                         grade = ""
 
-                        for col_text in cols:
-                            col_clean = col_text.strip().upper()
+                        # Primary: the result table's rows are consistently laid out as
+                        # [Subject, Total Credit, Earned Credit, Grade]. When a row has
+                        # exactly this shape, take the grade cell by POSITION rather than
+                        # pattern-matching its text - this is immune to RGPV adding a new
+                        # annotation/marker to the grade text in the future (we've already
+                        # been bitten once by an unanticipated '*' suffix that GRADE_PAT
+                        # didn't allow, which silently dropped the whole subject).
+                        if len(cols) == 4 and SUBJECT_CODE_PAT.match(cols[0].strip().upper()) and not any(
+                                g in cols[0].strip().upper() for g in ["PASS", "FAIL", "TOTAL", "SGPA", "CGPA"]):
+                            sub_code = cols[0].strip().upper()
+                            grade = cols[3].strip().upper()
+                        else:
+                            # Fallback: scan every cell and pattern-match, for rows that
+                            # don't have the expected 4-column shape.
+                            for col_text in cols:
+                                col_clean = col_text.strip().upper()
 
-                            # Pinpoint subject code substring entry patterns using a strict regex
-                            if SUBJECT_CODE_PAT.match(col_clean) and not any(
-                                    g in col_clean for g in ["PASS", "FAIL", "TOTAL", "SGPA", "CGPA"]):
-                                sub_code = col_clean
+                                # Pinpoint subject code substring entry patterns using a strict regex
+                                if SUBJECT_CODE_PAT.match(col_clean) and not any(
+                                        g in col_clean for g in ["PASS", "FAIL", "TOTAL", "SGPA", "CGPA"]):
+                                    sub_code = col_clean
 
-                            # Match grading score boundaries (including standard, special codes, grace grades, and absent formats like F (ABS))
-                            elif GRADE_PAT.match(col_clean):
-                                grade = col_clean
+                                # Match grading score boundaries (including standard, special codes, grace grades, and absent formats like F (ABS))
+                                elif GRADE_PAT.match(col_clean):
+                                    grade = col_clean
+
+                            if sub_code and not grade:
+                                logger.warning(f"[WARNING] Subject '{sub_code}' found but no grade cell matched for {rollno}. Raw row: {cols}")
 
                         # Skip subjects marked as [N] / (N) - Not Applicable to this student
                         # Also checks if subject code contains " - N" or ends with "-N"
