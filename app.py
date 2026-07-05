@@ -454,7 +454,7 @@ def get_dddd_ocr():
 
 # ── Precompiled regex patterns (grade/roll parsing) ────────────
 SUBJECT_CODE_PAT = re.compile(r'^[A-Z]{2,6}-?\d{3,4}')
-GRADE_PAT = re.compile(r'^(O|A\+|A|B\+|B|C\+|C|D|F|ABS|ABSENT|W|I|P)#*(\s*[\(\[\{]ABS[\)\]\}])?$')
+GRADE_PAT = re.compile(r'^(O|A\+|A|B\+|B|C\+|C|D|F|ABS|ABSENT|W|I|P)[#*]*(\s*[\(\[\{]ABS[\)\]\}])?$')
 NOT_APPLICABLE_PAT = re.compile(r'[\(\[\{]N[\)\]\}]|\bN\b|-N$', re.IGNORECASE)
 ROLL_PATTERN = re.compile(r'(?<!\w)([0-9]{4}[A-Z]{2,4}[0-9]{2}(?:[0-9]{3,4}|3D[0-9]{2}))(?!\w)', re.IGNORECASE)
 
