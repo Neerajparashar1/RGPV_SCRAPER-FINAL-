@@ -44,6 +44,8 @@ import re
 import csv
 import io
 import logging
+import threading
+import functools
 from logging.handlers import RotatingFileHandler
 import requests
 from flask import Flask, render_template, request, jsonify, send_file
@@ -362,6 +364,20 @@ def handle_exception(e):
     logger.exception("Unhandled exception")
     return jsonify({"ok": False, "error": f"Server error: {str(e)}"}), 500
 
+# ── Session lock ───────────────────────────────────────────────
+# Serializes access to the shared driver/session-state globals below across
+# concurrent requests (e.g. clicking "Restart Browser" while a submit is
+# still mid-flight would otherwise reassign `driver` and clobber
+# `last_captcha_src` out from under the in-flight request).
+session_lock = threading.Lock()
+
+def with_session_lock(f):
+    @functools.wraps(f)
+    def wrapper(*args, **kwargs):
+        with session_lock:
+            return f(*args, **kwargs)
+    return wrapper
+
 # ── Global driver state ──────────────────────────────────────
 driver = None
 session_sem = None
@@ -433,6 +449,13 @@ def get_dddd_ocr():
             logger.info(f"[SYSTEM LOGGER] Deep Learning AI Captcha Solver load failed: {e}. Falling back to Tesseract.")
             dddd_ocr_engine = False
     return dddd_ocr_engine if dddd_ocr_engine else None
+
+
+# ── Precompiled regex patterns (grade/roll parsing) ────────────
+SUBJECT_CODE_PAT = re.compile(r'^[A-Z]{2,6}-?\d{3,4}')
+GRADE_PAT = re.compile(r'^(O|A\+|A|B\+|B|C\+|C|D|F|ABS|ABSENT|W|I|P)#*(\s*[\(\[\{]ABS[\)\]\}])?$')
+NOT_APPLICABLE_PAT = re.compile(r'[\(\[\{]N[\)\]\}]|\bN\b|-N$', re.IGNORECASE)
+ROLL_PATTERN = re.compile(r'(?<!\w)([0-9]{4}[A-Z]{2,4}[0-9]{2}(?:[0-9]{3,4}|3D[0-9]{2}))(?!\w)', re.IGNORECASE)
 
 
 BRANCHES = {
@@ -559,6 +582,7 @@ def dismiss_alerts_safely(driver_instance):
 
 # ── Start browser session ─────────────────────────────────────
 @app.route("/api/start", methods=["POST"])
+@with_session_lock
 def start_session():
     global driver, session_sem, session_prefix, session_filename, session_subjects
     global session_roll_list, session_roll_list_idx, session_mode
@@ -823,6 +847,7 @@ def start_session():
 
 # ── Get captcha image as base64 ───────────────────────────────
 @app.route("/api/captcha", methods=["GET"])
+@with_session_lock
 def get_captcha():
     global driver, session_wait_value, last_captcha_src
     if not check_driver_health():
@@ -1151,6 +1176,7 @@ def get_captcha():
 
 # ── Submit captcha + fetch result ─────────────────────────────
 @app.route("/api/submit", methods=["POST"])
+@with_session_lock
 def submit():
     global session_subjects, driver, session_wait_value, last_captcha_src
     if not check_driver_health():
@@ -1447,17 +1473,17 @@ def submit():
                             col_clean = col_text.strip().upper()
 
                             # Pinpoint subject code substring entry patterns using a strict regex
-                            if re.match(r'^[A-Z]{2,6}-?\d{3,4}', col_clean) and not any(
+                            if SUBJECT_CODE_PAT.match(col_clean) and not any(
                                     g in col_clean for g in ["PASS", "FAIL", "TOTAL", "SGPA", "CGPA"]):
                                 sub_code = col_clean
 
                             # Match grading score boundaries (including standard, special codes, grace grades, and absent formats like F (ABS))
-                            elif re.match(r'^(O|A\+|A|B\+|B|C\+|C|D|F|ABS|ABSENT|W|I|P)#*(\s*[\(\[\{]ABS[\)\]\}])?$', col_clean):
+                            elif GRADE_PAT.match(col_clean):
                                 grade = col_clean
 
                         # Skip subjects marked as [N] / (N) - Not Applicable to this student
                         # Also checks if subject code contains " - N" or ends with "-N"
-                        sub_has_N = bool(re.search(r'[\(\[\{]N[\)\]\}]|\bN\b|-N$', sub_code, re.IGNORECASE)) if sub_code else False
+                        sub_has_N = bool(NOT_APPLICABLE_PAT.search(sub_code)) if sub_code else False
 
                         if sub_code and grade and not sub_has_N:
                             # Split by brackets/parentheses to extract clean subject key
@@ -1485,10 +1511,9 @@ def submit():
             logger.info(f"\n[SYSTEM LOGGER] MAP RESULT FOR {rollno} -> {extracted_grades}\n")
 
             # Post-extraction: remove [N] subjects (Not Applicable)
-            _N_PAT = re.compile(r'[\(\[\{]N[\)\]\}]|\bN\b|-N$', re.IGNORECASE)
             extracted_grades = {
                 code: grd for code, grd in extracted_grades.items()
-                if not _N_PAT.search(code) and grd.upper() not in ('N', '[N]', '(N)')
+                if not NOT_APPLICABLE_PAT.search(code) and grd.upper() not in ('N', '[N]', '(N)')
             }
 
             # Fallback if empty
@@ -1730,10 +1755,9 @@ def parse_rollsheet():
         if not (filename.endswith(".xlsx") or filename.endswith(".xls") or filename.endswith(".csv")):
             return jsonify({"ok": False, "error": "Unsupported file format. Please upload a .xlsx or .csv file."})
 
-        # RGPV roll number pattern:
+        # RGPV roll number pattern (ROLL_PATTERN, module-level constant):
         # 4-digit institution code + 2-4 uppercase letters (branch) + exactly 2-digit year + 3-4 digit sequence
         # Year is ALWAYS 2 digits (e.g. 24 for 2024). Using [0-9]{2,4} caused greedy over-matching.
-        ROLL_PATTERN = re.compile(r'(?<!\w)([0-9]{4}[A-Z]{2,4}[0-9]{2}(?:[0-9]{3,4}|3D[0-9]{2}))(?!\w)', re.IGNORECASE)
 
         roll_numbers = set()
         file_bytes = uploaded_file.read()
@@ -1987,6 +2011,7 @@ def update_wait():
 
 # ── Stop session ──────────────────────────────────────────────
 @app.route("/api/stop", methods=["POST"])
+@with_session_lock
 def stop_session():
     global driver
     try:
