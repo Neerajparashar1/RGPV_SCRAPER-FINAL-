@@ -747,17 +747,33 @@ def start_session():
                 return jsonify({"ok": False, "error": f"Failed to create CSV file. Error: {file_err}"})
         else:
             try:
-                # In list mode, subjects are discovered dynamically per-student during
-                # submit() (see its own header-expansion logic there). session_subjects
-                # is intentionally empty here, so there is nothing meaningful to migrate
-                # the header to yet - skip, and let submit() grow the header correctly
-                # as real subjects are found. Migrating now would otherwise treat the
-                # existing subject columns as "unexpected" and silently drop their data.
-                if session_subjects:
-                    with open(session_filename, "r", newline="", encoding="utf-8") as f:
-                        reader = list(csv.reader(f))
-                    if reader:
-                        existing_header = reader[0]
+                with open(session_filename, "r", newline="", encoding="utf-8") as f:
+                    reader = list(csv.reader(f))
+                if reader:
+                    existing_header = reader[0]
+
+                    # Seed session_subjects with any subject columns the existing file
+                    # already has - e.g. columns dynamically discovered by submit()
+                    # during a prior run of this same session (a portal subject with
+                    # no static entry in BRANCHES, such as a practical component RGPV
+                    # reports that the hardcoded subject list doesn't know about).
+                    # Without this, restarting a session recomputes session_subjects
+                    # purely from the static BRANCHES list, and the migration below
+                    # would treat those extra already-scraped columns as "unexpected"
+                    # and silently drop their data from every existing row - even
+                    # though the data was correctly scraped and saved originally.
+                    _FIXED_COLS = {"ROLL NUMBER", "NAME", "SGPA", "CGPA", "RESULT"}
+                    for col in existing_header:
+                        if col.strip().upper() not in _FIXED_COLS and col not in session_subjects:
+                            session_subjects.append(col)
+
+                    # In list mode, subjects are otherwise discovered dynamically
+                    # per-student during submit() (see its own header-expansion logic
+                    # there). session_subjects may now be non-empty here purely from
+                    # the seeding above - that's fine, it just means there are prior
+                    # columns to preserve; if it's still empty, there is nothing
+                    # meaningful to migrate the header to yet, so skip.
+                    if session_subjects:
                         expected_header = ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"]
                         if existing_header != expected_header:
                             logger.info(f"[SYSTEM LOGGER] Upgrading existing CSV header in '{session_filename}' to match current subject list.")
