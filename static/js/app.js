@@ -516,7 +516,8 @@
     // ── Roll List (Upload) Mode ─────────────────────────────
     rollList: [],           // Full roll numbers from uploaded Excel
     rollListIdx: 0,         // Current position in rollList
-    fetchedStudentsData: [] // Successfully fetched students in the current session
+    fetchedStudentsData: [], // Successfully fetched students in the current session
+    activeAbortController: null // Aborts the in-flight captcha/submit fetch (used by fetch timeouts and Stop)
   };
 
   // ── Upload Mode Helper (DOM-based, never gets out of sync) ────────
@@ -1138,8 +1139,16 @@
       aiStatus.innerHTML = '🤖 Loading...';
     }
 
+    // Bounds how long this fetch can block - without this, a wedged
+    // backend leaves the tab waiting forever with zero feedback. No
+    // comparably long legitimate wait path exists for this call, so the
+    // timeout can stay short.
+    const controller = new AbortController();
+    state.activeAbortController = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 20000);
+
     try {
-      const res  = await fetch(captchaUrl);
+      const res  = await fetch(captchaUrl, { signal: controller.signal });
       if (!res.ok) {
         const text = await res.text();
         throw new Error(`HTTP ${res.status}: ${text.substring(0, 100)}`);
@@ -1212,8 +1221,20 @@
         </div>
         <div class="captcha-placeholder" style="color:#ff6b35">Error — retry</div>
       `;
-      log('Network error: ' + e.message, 'err');
       if (aiStatus) aiStatus.style.display = 'none';
+
+      if (e.name === 'AbortError') {
+        // Backend didn't respond in time - never skip the roll, just keep
+        // retrying (same philosophy as the server's own escalating retry).
+        log(`Backend did not respond in time — retrying same roll...`, 'err');
+        if (state.running) {
+          await loadCaptcha();
+        }
+      } else {
+        log('Network error: ' + e.message, 'err');
+      }
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 
@@ -1240,11 +1261,20 @@
       }
     }
 
+    // Bounds how long this fetch can block - must clear the server's own
+    // worst-case wait (dynamic wait up to 60s + heal-escalation overhead),
+    // so it stays generous. Without this, a wedged backend leaves the tab
+    // waiting forever with zero feedback.
+    const controller = new AbortController();
+    state.activeAbortController = controller;
+    const timeoutId = setTimeout(() => controller.abort(), 100000);
+
     try {
       const res  = await fetch('/api/submit', {
         method: 'POST',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify({ roll: rollSuffix, captcha, full_roll: isFullRoll })
+        body: JSON.stringify({ roll: rollSuffix, captcha, full_roll: isFullRoll }),
+        signal: controller.signal
       });
       if (!res.ok) {
         const text = await res.text();
@@ -1396,7 +1426,19 @@
       }
 
     } catch(e) {
+      if (e.name === 'AbortError') {
+        // Backend didn't respond in time - never skip the roll, just keep
+        // retrying (same philosophy as the server's own escalating retry).
+        log(`Backend did not respond in time — retrying same roll...`, 'err');
+        setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
+        if (state.running) {
+          await loadCaptcha();
+        }
+        return;
+      }
       log('Error parsing response stream: ' + e.message, 'err');
+    } finally {
+      clearTimeout(timeoutId);
     }
 
     setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
