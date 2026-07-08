@@ -431,6 +431,15 @@ session_speed_mode = "normal"
 session_submit_delay = 1.5
 session_reset_delay = 0.5
 
+# ── Wrong-captcha escalating retry state (never skips a roll - see
+# CASE 3 in submit()) ──────────────────────────────────────────
+session_wrong_captcha_roll = None
+session_wrong_captcha_streak = 0
+session_wrong_captcha_total = 0
+
+WRONG_CAPTCHA_CHEAP_RETRY_LIMIT = 4
+WRONG_CAPTCHA_HEAL_RETRY_LIMIT = 8
+
 SPEED_CONFIGS = {
     "slow": {
         "settle": 0.6,
@@ -1267,6 +1276,7 @@ def get_captcha():
 @with_session_lock
 def submit():
     global session_subjects, driver, session_wait_value, last_captcha_src
+    global session_wrong_captcha_roll, session_wrong_captcha_streak, session_wrong_captcha_total
     if not check_driver_health():
         success = heal_browser_session()
         if not success:
@@ -1794,6 +1804,10 @@ def submit():
             except Exception as reset_err:
                 logger.info(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
 
+            session_wrong_captcha_roll = None
+            session_wrong_captcha_streak = 0
+            session_wrong_captcha_total = 0
+
             return jsonify({
                 "ok": True,
                 "status": "success",
@@ -1816,6 +1830,11 @@ def submit():
                 logger.info("[SYSTEM LOGGER] Form reset complete (Not Found case).")
             except Exception as reset_err:
                 logger.info(f"[SYSTEM LOGGER] Form reset failed: {reset_err}")
+
+            session_wrong_captcha_roll = None
+            session_wrong_captcha_streak = 0
+            session_wrong_captcha_total = 0
+
             return jsonify({
                 "ok": True,
                 "status": "not_found",
@@ -1824,13 +1843,44 @@ def submit():
 
         # ── CASE 3: WRONG CAPTCHA ─────────────────────────────────
         else:
+            # Track a per-roll streak of consecutive wrong captchas. Never
+            # gives up on the roll (the user explicitly requires no roll is
+            # ever skipped) - instead escalates recovery the longer the
+            # streak runs, and wraps around to keep escalating indefinitely
+            # rather than looping the same cheap retry forever.
+            if session_wrong_captcha_roll != roll_number:
+                session_wrong_captcha_roll = roll_number
+                session_wrong_captcha_streak = 0
+                session_wrong_captcha_total = 0
+            session_wrong_captcha_streak += 1
+            session_wrong_captcha_total += 1
+
             try:
-                logger.info(f"[SYSTEM LOGGER] Wrong captcha. Waiting {session_reset_delay}s before resetting...")
+                logger.info(f"[SYSTEM LOGGER] Wrong captcha (streak {session_wrong_captcha_streak}, total {session_wrong_captcha_total} on this roll). Waiting {session_reset_delay}s before resetting...")
                 time.sleep(session_reset_delay)
                 reset_results_form(driver, session_program)
                 logger.info("[SYSTEM LOGGER] Form reset complete (Wrong Captcha case).")
             except Exception as e:
                 pass
+
+            if session_wrong_captcha_streak > WRONG_CAPTCHA_HEAL_RETRY_LIMIT:
+                # Escalated enough times without success - do a full
+                # browser restart and wrap the streak so the cheap-retry /
+                # heal cycle keeps repeating for as long as it takes,
+                # instead of ever giving up on this roll.
+                logger.info(f"[SYSTEM LOGGER] Still retrying roll {roll_number} after {session_wrong_captcha_total} total attempts — escalating recovery again (full browser restart).")
+                try:
+                    heal_browser_session()
+                except Exception as heal_err:
+                    logger.info(f"[SYSTEM LOGGER] Escalated heal_browser_session() failed: {heal_err}")
+                session_wrong_captcha_streak = 0
+            elif session_wrong_captcha_streak > WRONG_CAPTCHA_CHEAP_RETRY_LIMIT:
+                logger.info(f"[SYSTEM LOGGER] Repeated wrong captcha on roll {roll_number} (streak {session_wrong_captcha_streak}) — running a browser health heal before retrying.")
+                try:
+                    heal_browser_session()
+                except Exception as heal_err:
+                    logger.info(f"[SYSTEM LOGGER] heal_browser_session() failed: {heal_err}")
+
             return jsonify({
                 "ok": True,
                 "status": "wrong_captcha",

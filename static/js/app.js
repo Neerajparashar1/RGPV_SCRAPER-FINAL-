@@ -1346,13 +1346,12 @@
         await loadCaptcha();
         return; // Terminates safely to prevent stream collisions
       } else if (data.status === 'wrong_captcha') {
+        // The server tracks the real retry/escalation state per roll (cheap
+        // retry -> full browser heal -> repeat, never giving up on the
+        // roll) - this just keeps retrying and logging. No local cap here:
+        // a roll is never skipped, so there is nothing to "give up" into.
         state.captchaRetries++;
-        if (state.captchaRetries >= 10) {
-          log(`✗ Too many captcha retries (${state.captchaRetries}) for roll ${rollSuffix}. Disabling Auto-Solve.`, 'err');
-          document.getElementById('auto-solve-chk').checked = false;
-          state.captchaRetries = 0;
-        }
-        log(`✗ Verification notice: ${data.message || 'Wrong captcha'} — retry (Attempt ${state.captchaRetries}/10)`, 'err');
+        log(`✗ Verification notice: ${data.message || 'Wrong captcha'} — retry (attempt ${state.captchaRetries})`, 'err');
         setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
         await loadCaptcha();
         return; // Terminates safely to prevent stream collisions
