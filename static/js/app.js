@@ -1088,6 +1088,7 @@
         const firstDisplay = isUploadMode() ? state.rollList[0] : state.currentRoll;
         setStatus(`Browser open · Roll ${firstDisplay} loading...`, 'running');
         enableCaptchaSection(true);
+        document.getElementById('btn-stop').style.display = 'flex';
         updateProgress();
         loadCaptcha();
       } else {
@@ -1373,7 +1374,9 @@
       } else if (data.status === 'browser_recovered') {
         log(`🛡️ Browser session recovered automatically — retrying captcha...`, 'info');
         setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
-        await loadCaptcha();
+        if (state.running) {
+          await loadCaptcha();
+        }
         return; // Terminates safely to prevent stream collisions
       } else if (data.status === 'wrong_captcha') {
         // The server tracks the real retry/escalation state per roll (cheap
@@ -1383,7 +1386,9 @@
         state.captchaRetries++;
         log(`✗ Verification notice: ${data.message || 'Wrong captcha'} — retry (attempt ${state.captchaRetries})`, 'err');
         setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
-        await loadCaptcha();
+        if (state.running) {
+          await loadCaptcha();
+        }
         return; // Terminates safely to prevent stream collisions
       }
 
@@ -1397,6 +1402,7 @@
         log('🎉 All roll numbers processed!', 'ok');
         enableCaptchaSection(false);
         state.running = false;
+        document.getElementById('btn-stop').style.display = 'none';
         updateStepsProgress();
         document.getElementById('btn-dl').style.opacity = '1';
         document.getElementById('btn-dl').style.pointerEvents = 'auto';
@@ -1421,6 +1427,7 @@
         const delayInSec = (currentInterRollDelay / 1000).toFixed(1);
         setStatus(`Running · Roll ${nextRoll} of ${totalCount} · Waiting ${delayInSec}s...`, 'running');
         await sleep(currentInterRollDelay);
+        if (!state.running) return; // Stopped during the inter-roll delay
         setStatus(`Running · Roll ${nextRoll} of ${totalCount}`, 'running');
         await loadCaptcha();
       }
@@ -1442,6 +1449,30 @@
     }
 
     setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
+  }
+
+  // ── STOP SESSION ───────────────────────────────
+  // The one legitimate way to abandon a roll the never-skip retry logic
+  // would otherwise keep retrying forever. Stops the loop immediately from
+  // the UI's perspective regardless of what the backend is doing (Flask
+  // runs single-threaded here, so a request already mid-flight inside
+  // Selenium can't be preempted server-side - it just finishes on its own,
+  // now bounded by the driver-level timeouts, before the next /api/start
+  // can proceed).
+  function stopSession() {
+    state.running = false;
+    if (state.activeAbortController) {
+      state.activeAbortController.abort();
+    }
+    setStatus('Stopped', 'idle');
+    log('⏹ Stopped by user.', 'warn');
+    document.getElementById('btn-stop').style.display = 'none';
+    setBtnLoading('btn-submit','submit-spinner','btn-submit-txt', false, 'Submit →');
+    enableCaptchaSection(false);
+
+    // Best-effort cleanup so the driver gets .quit() for a clean next
+    // start - fire-and-forget, ignore errors/timeout on this call.
+    fetch('/api/stop', { method: 'POST' }).catch(() => {});
   }
 
   // ── DOWNLOAD CSV ──────────────────────────────

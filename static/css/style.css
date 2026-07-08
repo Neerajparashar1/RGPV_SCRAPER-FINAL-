@@ -446,6 +446,19 @@
     50%      { box-shadow: 0 4px 24px rgba(6, 182, 212, 0.55); }
   }
 
+  .btn-stop {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: #ffffff;
+    box-shadow: 0 4px 16px rgba(239, 68, 68, 0.3);
+    margin-top: 8px;
+  }
+  .btn-stop:hover {
+    filter: brightness(1.08);
+    transform: translateY(-1px);
+    box-shadow: 0 8px 22px rgba(239, 68, 68, 0.45);
+  }
+  .btn-stop:disabled { opacity: .4; cursor: not-allowed; transform: none; box-shadow: none; }
+
   .btn-download {
     background: transparent;
     color: var(--accent);
