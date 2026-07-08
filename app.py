@@ -1823,6 +1823,49 @@ def submit():
 
         # ── CASE 2: NOT FOUND ─────────────────────────────────────
         elif "Result" in alerttext or "not found" in page_source.lower():
+            # Record the not-found roll in the sheet too (blank grade/SGPA/
+            # CGPA columns, Result="NOT FOUND"), reusing the same duplicate-
+            # check + prefix-ordered-sort + write pattern as the success case,
+            # so a not-found roll is visible in the CSV/Excel export instead
+            # of only appearing in the live session table.
+            try:
+                not_found_row = [roll_number, ""] + [""] * len(session_subjects) + ["", "", "NOT FOUND"]
+                row_exists = False
+                rows = []
+                headers = []
+                if os.path.exists(session_filename):
+                    with open(session_filename, "r", newline="", encoding="utf-8") as f:
+                        reader = csv.reader(f)
+                        file_data = list(reader)
+                        if file_data:
+                            headers = file_data[0]
+                            roll_idx = 0 if "Roll Number" in headers else -1
+                            if roll_idx != -1:
+                                for r in file_data[1:]:
+                                    if r and len(r) > roll_idx and r[roll_idx].strip().upper() == roll_number.strip().upper():
+                                        row_exists = True
+                                        rows.append(not_found_row)
+                                    else:
+                                        rows.append(r)
+                            else:
+                                rows = file_data[1:]
+
+                if not row_exists:
+                    rows.append(not_found_row)
+
+                def _sort_key_nf(row):
+                    row_roll = row[0].strip().upper() if row else ""
+                    same_prefix = bool(session_prefix) and row_roll.startswith(session_prefix.upper())
+                    return (0 if same_prefix else 1, row_roll)
+                rows.sort(key=_sort_key_nf)
+
+                with open(session_filename, "w", newline="", encoding="utf-8") as f:
+                    writer = csv.writer(f)
+                    writer.writerow(headers if headers else ["Roll Number", "Name"] + session_subjects + ["SGPA", "CGPA", "Result"])
+                    writer.writerows(rows)
+            except Exception as file_err:
+                logger.info(f"[SYSTEM LOGGER] Failed to record not-found roll {roll_number} in CSV: {file_err}")
+
             try:
                 logger.info(f"[SYSTEM LOGGER] Student not found. Waiting {session_reset_delay}s before resetting...")
                 time.sleep(session_reset_delay)
