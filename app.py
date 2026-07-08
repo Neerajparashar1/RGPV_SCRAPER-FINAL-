@@ -61,6 +61,19 @@ from selenium.common.exceptions import NoAlertPresentException, InvalidSessionId
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
 
+# NOTE: RemoteConnection.set_timeout() (a process-wide transport-level socket
+# timeout) was evaluated here as an outer bound above set_page_load_timeout/
+# set_script_timeout below, but is broken in the actually-installed
+# selenium==4.44.0 (raises AttributeError: 'RemoteConnection' has no
+# attribute '_client_config' - the deprecated classmethod predates a client
+# refactor). The modern replacement (a ClientConfig with a fixed
+# remote_server_addr) doesn't fit this codebase's pattern of launching a
+# local msedgedriver subprocess via Service, whose port isn't known until
+# after the driver starts. Deliberately left unset - set_page_load_timeout/
+# set_script_timeout below already cover the failure modes actually observed
+# (navigation/script calls blocking forever); a fully wedged driver process
+# at the OS level is a rarer case this fix doesn't attempt to bound.
+
 
 
 
@@ -317,13 +330,20 @@ def heal_browser_session():
         
         new_driver = webdriver.Edge(service=service, options=options)
         new_driver.implicitly_wait(3)
+        # Bound how long a single page navigation / script execution can
+        # block, so a wedged browser can't freeze this (single-threaded)
+        # Flask server forever - sized above the dynamic-wait ceiling
+        # (session_wait_value maxes at 60s) and the small synchronous JS
+        # snippets used throughout this file, respectively.
+        new_driver.set_page_load_timeout(75)
+        new_driver.set_script_timeout(25)
         new_driver.maximize_window()
         new_driver.get("http://result.rgpv.ac.in/Result/ProgramSelect.aspx")
         dismiss_alerts_safely(new_driver)
 
         from selenium.webdriver.support.ui import WebDriverWait
         from selenium.webdriver.support import expected_conditions as EC
-        
+
         if session_program == "MCA":
             logger.info("[SYSTEM LOGGER] MCA selected in self-healing. Clicking MCA program...")
             try:
@@ -857,9 +877,13 @@ def start_session():
         from selenium.webdriver.support import expected_conditions as EC
 
         new_driver.implicitly_wait(3)
+        # Bound how long a single page navigation / script execution can
+        # block (see heal_browser_session() for the same settings and why).
+        new_driver.set_page_load_timeout(75)
+        new_driver.set_script_timeout(25)
         new_driver.maximize_window()
         new_driver.get("http://result.rgpv.ac.in/Result/ProgramSelect.aspx")
-        
+
         # Check and dismiss any alert on load
         dismiss_alerts_safely(new_driver)
 
