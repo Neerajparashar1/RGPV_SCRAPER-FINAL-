@@ -1,0 +1,278 @@
+RGPV RESULT SCRAPER — SESSION SUMMARY
+======================================
+Repo: https://github.com/Neerajparashar1/RGPV_SCRAPER-FINAL-
+Branch: main
+
+This file summarizes everything done in this session, in chronological order,
+with the corresponding git commit for each change.
+
+
+1. INITIAL SETUP
+-----------------
+- Project was not a git repository. Initialized git, created .gitignore
+  (excludes .venv/.venv1, build/dist, msedgedriver binaries, scraped student
+  data folders CS_Core/CS_Emerging/IT/MCA/results, .idea, .claude).
+- Pushed the original, unmodified code as the first commit.
+  Commit: 78dda7a "Initial commit of RGPV result scraper"
+
+
+2. CODE QUALITY CLEANUP + UI REDESIGN
+--------------------------------------
+Commit: 49254f5 "Clean up code quality, extract frontend assets, and refresh UI"
+
+- Removed a leaked developer-machine diagnostic path in app.py (dead code,
+  would only fail silently on other machines).
+- Fixed requirements.txt: added missing Flask (a real bug — app.py imports
+  Flask but it wasn't listed at all), removed unused Django/asgiref/sqlparse/
+  python-dotenv, deduped bs4/beautifulsoup4, pinned floating versions.
+- Replaced ~110 print()-based log statements with Python's logging module
+  (console + rotating file handler -> rgpv_scraper.log).
+- Extracted the ~3400-line templates/index.html's inline CSS/JS into
+  static/css/style.css and static/js/app.js. Updated app.py and
+  app_launcher.py to serve/bundle the new static folder correctly (dev +
+  packaged EXE).
+- Redesigned the UI: indigo/cyan color palette, animated aurora background,
+  gradient buttons, glassmorphism cards, pulsing status indicators,
+  shimmering stat cards, blinking terminal cursor — all confirmed visually
+  in-browser.
+- Consolidated duplicated Python-environment-detection logic across
+  run.bat/build.bat into a shared find_venv_python.bat.
+- Rewrote README.md to describe the actual Flask app instead of a stale,
+  nonexistent CLI script.
+
+
+3. RACE-CONDITION FIX + PERFORMANCE ANALYSIS
+----------------------------------------------
+Commit: 62ef109 "Fix race condition and hoist regex patterns to module level"
+
+- Deep analysis found: no locking existed anywhere in app.py, despite the
+  Flask app running threaded. Concrete risk: clicking "Restart Browser"
+  while a submit() was still mid-flight could reassign the shared Selenium
+  driver out from under the in-flight request, corrupting session state.
+- Added a threading.Lock (session_lock) via a with_session_lock decorator
+  wrapping /api/start, /api/captcha, /api/submit, /api/stop — serializes
+  access to the shared driver/session globals.
+- Hoisted repeated inline regex patterns (grade/subject parsing, plus two
+  that were already being recompiled per call) into module-level compiled
+  constants for consistency.
+- Verified via a live scrape against the real RGPV portal (Data Science /
+  CD branch, sem 3, 2024 batch, 23 roll numbers) before and after the
+  change: results were byte-identical. Also verified the race fix directly
+  by firing a submit and a concurrent restart-browser request — the second
+  request now waits for the lock instead of corrupting state.
+
+
+4. CSV CORRUPTION BUG FIX (list-mode session start)
+-----------------------------------------------------
+Commit: 1242b20 "Fix CSV data corruption when starting a list-mode session on
+an existing file"
+
+- Found via live testing of the "upload roll sheet" feature: starting a
+  list-mode session (roll-sheet upload) against an existing CSV file that
+  already had range-mode data silently corrupted every existing row —
+  start_session()'s header-migration logic used positional truncation
+  instead of matching columns by name.
+- Fixed by skipping that migration when session_subjects is empty (nothing
+  meaningful to migrate to yet) and switching the general case to the same
+  name-based remap already used elsewhere.
+- Recovered the corrupted CSV data from a saved baseline snapshot and this
+  conversation's own record of the correct values, then re-verified the fix
+  against the real portal.
+
+
+5. CUSTOM SHEET NAME FOR UPLOADS
+-----------------------------------
+Commit: c0ef38e "Add optional custom sheet name for roll-sheet uploads"
+
+- Added an optional "Save as a custom-named sheet" checkbox + input to the
+  Upload Roll Sheet UI, so scraped data can go into its own separate .csv
+  file instead of always using the auto-generated branch/semester filename.
+- Also fixed /api/previous_files, which was only listing files containing
+  "result"/"results" in the name — custom-named sheets were invisible in
+  the UI's Previous Files list until this was loosened to list all .csv
+  files in the output folders.
+
+
+6. EXPORT/DOWNLOAD FEATURE SET
+---------------------------------
+Commit: 64819ff "Add Excel export, fix PDF column wrapping, merge-into-
+existing sheets, delete-to-trash"
+
+Four things were requested; analysis first confirmed which already existed:
+  - CSV export: already existed, unchanged.
+  - PDF export: already existed and was fairly sophisticated (color-coded
+    PASS/FAIL, dark header, page numbers) — but a real bug was found via
+    live testing: with 20+ subject columns (produced by the dynamic
+    subject-detection feature), the old fixed column-width/font-size
+    scaling (2 hardcoded tiers) overflowed the page and wrapped subject
+    codes across multiple lines.
+  - Excel export: did not exist at all — new feature.
+  - Merge-into-existing-file / delete: did not exist at all — new features.
+
+What was built:
+  - Fixed the PDF scaling bug: replaced the 2-tier hardcoded system with a
+    proportional calculation (computePdfLayout() in app.js), shared by both
+    PDF export paths (live session + previous files).
+  - Added styled Excel (.xlsx) export via the ExcelJS library (loaded from
+    CDN): dark header row, cell borders, PASS/FAIL colored Result column,
+    auto-sized columns. New "Excel" button in both the live session panel
+    and the Previous Files list.
+  - Added an option to append an upload-sheet scrape into an EXISTING sheet
+    instead of always creating a new one (radio choice: new sheet name vs.
+    pick an existing file from a dropdown).
+  - While verifying the merge-into-existing feature live, found and fixed a
+    related bug: submit()'s dynamic header-expansion computed the CSV's
+    expected header purely from subjects seen so far in the CURRENT
+    session, so pointing a fresh session at a pre-existing rich file
+    silently dropped that file's other subject columns. Fixed by seeding
+    session_subjects from the target file's own header before any
+    expansion logic runs.
+  - Added delete-to-trash: a new /api/delete_file route moves a sheet into
+    a _trash/ folder (preserving its original folder structure, never
+    overwriting) instead of permanently deleting it, so accidental deletes
+    are recoverable. Added a 🗑 delete button (with a confirm() prompt) to
+    the Previous Files list; fixed its layout after the first version made
+    it hard to see (moved the button row below the file info, gave delete
+    its own red-tinted styling).
+
+All four verified live: PDF/Excel checked visually in-browser on a real
+20+ column mixed-branch file; merge-into-existing tested end-to-end against
+the live RGPV portal (including the header-seeding fix, confirmed old rows
+stayed byte-identical afterwards); delete-to-trash confirmed to move (not
+remove) files and disappear from the Previous Files list.
+
+
+7. PREMIUM VISUAL POLISH PASS
+--------------------------------
+Commit: 2c8fc7b "Premium visual polish pass: depth, stat typography, empty
+states"
+
+- Stat card values switched from a monospace font to the proportional sans
+  font with tighter letter-spacing (matching standard dashboard/stat-tile
+  typography instead of a fixed-width terminal look) — informed by the
+  project's dataviz design-system skill.
+- Added a layered "ambient + key light" shadow system plus a subtle inset
+  top-edge highlight (frosted-glass feel) across all major surfaces: cards,
+  stat cards, the results table, the steps indicator, the status bar, the
+  log terminal, and the developer profile card.
+- Gave inputs/selects a subtle inset shadow for tactile depth.
+- Reworked the empty-state icon into a soft circular glow badge instead of
+  a bare emoji.
+- Confirmed visually in-browser.
+
+
+8. RESULT-SHEET ORDERING (roll-number sequence, branch-changed last)
+------------------------------------------------------------------------
+Commit: 608f474 "Keep result sheets in roll-number sequence, branch-changed
+rolls last"
+
+- Requirement: roll numbers in CSV/Excel/PDF should appear in ascending
+  sequence (e.g. 1 to 10), with any "branch-changed" student (identified by
+  a roll-number prefix that doesn't match the session's own prefix) pushed
+  to the end of the sheet.
+- submit()'s CSV write logic was unified into a single read-modify-sort-
+  write: every write now sorts all rows by (same-prefix-first, roll number
+  ascending), so the physical CSV file always stays in the right order —
+  which CSV downloads and PDF/Excel conversions of saved sheets then
+  inherit automatically since they read from that same file.
+- The live session's own PDF/Excel export (which reads from the in-page
+  results table rather than the CSV) got the same sort applied in
+  extractLiveTableRows() in app.js.
+- Verified live: scraped a same-prefix roll and a different-prefix
+  (branch-changed) roll into an existing sheet; confirmed the main-prefix
+  rows stayed in ascending sequence and the different-prefix row landed at
+  the end, in both the CSV file and PDF/Excel exports of it.
+
+
+9. STANDALONE EXE BUILD
+--------------------------
+No code commit (build artifact only, not tracked in git).
+
+- Confirmed the user's goal: a fully standalone EXE for personal use, no
+  external dependencies (no Python, no separately-installed Tesseract).
+- Ran build.bat (PyInstaller) to produce dist/RGPV_Scraper.exe (~186 MB).
+  Already bundles: Python runtime, all Python deps, msedgedriver.exe,
+  Selenium Manager, ddddocr + its ONNX models, and the full templates/
+  static UI. Only remaining system requirement is Microsoft Edge itself
+  (pre-installed on Windows 10/11).
+- Deliberately did NOT bundle Tesseract OCR (the secondary/fallback OCR
+  engine) — user agreed this is unnecessary since ddddocr, the primary
+  solver, has proven 100% reliable in this project's testing.
+- Verified live: launched the built EXE standalone, confirmed it opens
+  the server on port 5001, serves the UI/CSS/JS correctly, and auto-opens
+  the browser exactly as designed.
+
+
+10. GRADE-EXTRACTION DATA-ACCURACY BUGS (found via live user report)
+------------------------------------------------------------------------
+Commits: 65c3edb "Fix grades silently dropped when RGPV marks them with an
+asterisk", a803751 "Make grade extraction robust to future unexpected grade
+markers"
+
+- User reported: roll 0905CA241005 (MCA sem 3) showed "Fail in MCA303" in
+  the Result field, but MCA303 itself was completely missing from the
+  scraped subject grades — not just showing a wrong grade, the whole
+  subject silently disappeared.
+- Reproduced live with temporary debug logging of the raw HTML table rows,
+  found the actual cell text: "F* (ABS)" — RGPV had marked this grade with
+  an asterisk. GRADE_PAT (the regex used to identify a grade cell) only
+  tolerated a trailing '#' (RGPV's own "grace marks" symbol), not '*', so
+  the whole row silently failed to match and was dropped.
+- First fix: widened GRADE_PAT to also accept '*'. Verified live — MCA303
+  now correctly shows "F* (ABS)" in both the API response and the saved
+  CSV.
+- Recognized this as a symptom of a more fragile design (matching grade
+  text against a fixed whitelist regex will keep breaking every time RGPV
+  uses a format not seen before) and asked for a permanent fix.
+- Second fix: the result table's rows are consistently laid out as
+  [Subject, Total Credit, Earned Credit, Grade]. When a row has exactly
+  that 4-column shape, the grade is now taken by POSITION (the last cell)
+  rather than by pattern-matching its text, so whatever RGPV puts there in
+  the future is captured as-is. The old pattern-matching scan is kept only
+  as a fallback for rows that don't have this exact shape, and now logs a
+  warning if a subject code is found with no matching grade, so any future
+  edge case is visible in the log instead of silently disappearing.
+- Verified live: re-tested the same roll (still correct) and a fresh
+  normal PASS case on a different branch (Data Science) as a regression
+  check — both extracted cleanly via the new positional path, no fallback
+  warnings triggered in either case.
+- IMPORTANT: this bug pre-dates this session's work entirely (the same
+  regex, unchanged, was carried over when patterns were hoisted to module
+  level earlier) — any previously-scraped student whose result page showed
+  an asterisk-marked (or otherwise unusually-formatted) grade may be
+  missing that one subject in an already-saved sheet from before today.
+  There is no way to retroactively detect or fix already-saved rows short
+  of re-scraping that specific roll number.
+
+
+NOTES / THINGS DISCOVERED ALONG THE WAY
+------------------------------------------
+- User does not want Claude/Anthropic attribution in git commit messages
+  for this project (no "Co-Authored-By: Claude" line) — this preference
+  has been saved to memory and applied to every commit after the first.
+- "Turbo" and "Fast" speed modes were tested live against the real RGPV
+  portal and found to cause a meaningfully higher rate of "wrong captcha"
+  failures (the portal's own timing can't keep up with the faster
+  automation) — "Normal" speed mode remains the recommended/default and
+  reliable choice; this was NOT changed in code since Normal was already
+  the default everywhere (UI dropdown and backend fallback).
+- ddddocr (the AI captcha solver) was independently confirmed extremely
+  reliable across dozens of live submissions during this session's testing.
+- Uploading a roll sheet mixing different branches within the same program
+  (e.g. Data Science + CS-Core, both B.Tech) works correctly — subjects for
+  both are dynamically detected and merged into one sheet. Mixing BTech and
+  MCA rolls in the same upload does NOT work, because RGPV serves those on
+  two entirely separate portal pages — this is an inherent portal
+  limitation, not a bug, and was left out of scope.
+- A student who has changed branch but kept their original roll number is
+  handled correctly even in ordinary manual-range scraping (not just via
+  roll-sheet upload): the app detects their real (different) subjects from
+  the portal and expands the sheet's columns to fit, rather than failing.
+
+
+CURRENT STATE
+---------------
+All changes are committed and pushed to origin/main (commit a803751 as of
+this summary). Working tree is clean. The app has been tested live against
+the real RGPV portal at every major step described above. A standalone
+dist/RGPV_Scraper.exe has also been built (not committed - build artifact).

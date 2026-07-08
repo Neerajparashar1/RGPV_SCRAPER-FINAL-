@@ -1,0 +1,122 @@
+RGPV PORTAL — WHY FAST/TURBO SPEED MODES CAUSE "WRONG CAPTCHA" ERRORS
+=========================================================================
+
+SHORT ANSWER
+------------
+Fast/Turbo speed modes fail more often NOT because of internet/network
+slowness, but because RGPV's server needs a certain amount of TIME to
+process each step (select semester, enter roll number, submit captcha)
+before it's ready for the next one. Turbo/Fast cut that time too short,
+so the app moves to the next step before RGPV's server has finished
+processing the previous one - causing a mismatch that RGPV reports
+generically as "wrong captcha", even when the OCR read the captcha
+correctly.
+
+
+BACKGROUND: HOW RGPV'S PORTAL WORKS
+--------------------------------------
+RGPV's result portal is built on old-style ASP.NET WebForms. Unlike a
+modern website, it doesn't update instantly - every action (selecting a
+dropdown, typing text, clicking a button) sends a "postback" to the
+server, and the server updates its own internal session state (called
+"ViewState") in response. The NEXT action only works reliably once this
+server-side update has actually finished.
+
+Think of it like a chain of form submissions: each link has to fully
+form before the next one can attach to it.
+
+
+THE FULL FLOW — 4 STEPS
+---------------------------
+1. Select the semester dropdown
+   -> Server receives the postback, updates its ViewState.
+2. Type the roll number
+   -> A JS event fires, triggering server-side validation.
+3. Capture + solve the captcha (OCR)
+   -> Purely our own code; the server isn't involved in this step.
+4. Submit the captcha
+   -> The server checks the CURRENT combination of semester + roll
+      number + captcha it has in its ViewState against what was
+      submitted.
+
+The critical part: at step 4, the server is comparing what you submit
+against whatever state it currently believes is true. If steps 1-2
+haven't fully "settled" on the server's side yet, step 4 can fail - and
+RGPV reports this generically as "wrong captcha," even when the actual
+problem is a stale/incomplete server-side state, unrelated to the
+captcha text itself.
+
+
+EXAMPLE: NORMAL MODE vs TURBO MODE (SIDE BY SIDE)
+------------------------------------------------------
+Say we're submitting roll 0905CD241002.
+
+NORMAL MODE (settle=0.4s, post_submit=3.5s):
+
+  T+0.0s   Semester dropdown selected
+  T+0.4s   [wait 0.4s - server has fully processed the ViewState update]
+  T+0.4s   Roll number entered via JS
+  T+0.7s   [wait 0.3s - server has registered the roll number]
+  T+0.7s   Captcha screenshot taken, OCR solves it: "RXPC2"
+  T+2.2s   Captcha text typed in, waited 1.5s
+  T+2.2s   Submit button clicked
+  T+5.7s   [wait 3.5s - server has fully processed the postback,
+            page has rendered]
+  T+5.7s   RESULT RECEIVED - everything matched correctly
+
+TURBO MODE (settle=0.1s, post_submit=0.8s):
+
+  T+0.0s   Semester dropdown selected
+  T+0.1s   [wait only 0.1s - server was still mid-update!]
+  T+0.1s   Roll number entered via JS - BUT the server's ViewState
+           hasn't fully registered the semester change yet
+  T+0.18s  [wait only 0.08s]
+  T+0.18s  Captcha screenshot taken, OCR solves it correctly: "RXPC2"
+  T+0.28s  Captcha text typed in
+  T+0.28s  Submit button clicked - the server still has an
+           incomplete/stale view of the session state
+  T+1.08s  [wait only 0.8s]
+  T+1.08s  RESULT: "Wrong Captcha" - because the server's session
+           state (stale/incomplete) didn't match what was submitted,
+           even though the OCR read the captcha correctly
+           ("RXPC2" was indeed right)
+
+
+THE KEY TAKEAWAY
+-------------------
+The OCR is not at fault. In both examples, ddddocr read the captcha as
+"RXPC2" correctly. The difference is that in Turbo mode, the server
+was never given enough time to finish processing the PREVIOUS step
+before we submitted the NEXT one. So when the server checks our
+submission against its own (stale) internal state, it finds a
+mismatch. RGPV surfaces this generically as "wrong captcha," even
+though the real cause is "stale/incomplete form state on the server
+side" - nothing to do with the captcha text itself.
+
+
+WHY THIS ISN'T JUST "NETWORK SLOWNESS"
+------------------------------------------
+- Network latency = how long it takes data to travel over the internet
+  connection.
+- Server processing time = how long RGPV's own server/code takes to
+  update its internal session state after each step. This is SEPARATE
+  from network latency - it's about their backend's own processing
+  speed, not the connection.
+
+Normal mode's delays (0.4s, 3.5s, etc.) are specifically sized to cover
+this server processing time, not just network latency. Fast/Turbo
+shrink that margin so much that our automation gets ahead of the
+server - we've already sent the next request before the server
+finished handling the previous one.
+
+This is why Normal mode is reliable (gives the server enough time) and
+Fast/Turbo are risky (they outrun the server before it catches up).
+
+
+PRACTICAL CONCLUSION
+------------------------
+Stick with Normal speed mode for reliable, accurate scraping. Fast and
+Turbo modes trade reliability for speed in a way that doesn't pay off
+against RGPV's specific portal - the extra "wrong captcha" retries they
+cause can end up costing MORE total time than Normal mode would have
+taken in the first place, on top of producing less trustworthy results.

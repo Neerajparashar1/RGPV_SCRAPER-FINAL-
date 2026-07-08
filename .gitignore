@@ -30,3 +30,7 @@ _trash/
 
 # Claude Code local tooling state
 .claude/
+
+# Runtime logs
+*.log
+*.log.*
