@@ -202,54 +202,69 @@ def reset_results_form(driver, session_program):
     try:
         # Dismiss any active alert first
         dismiss_alerts_safely(driver)
-        
-        # 1. Try finding Reset button using common locators
-        reset_locators = [
-            (By.ID, "ctl00_ContentPlaceHolder1_btnReset"),
-            (By.ID, "ctl00_ContentPlaceHolder1_btnreset"),
-            (By.XPATH, "//input[@value='Reset']"),
-            (By.XPATH, "//input[@value='reset']"),
-            (By.XPATH, "//input[contains(@id, 'Reset')]"),
-            (By.XPATH, "//input[contains(@id, 'reset')]"),
-            (By.XPATH, "//button[contains(text(), 'Reset')]"),
-            (By.XPATH, "//button[contains(text(), 'reset')]"),
-            (By.XPATH, "//a[contains(text(), 'Reset')]"),
-            (By.XPATH, "//a[contains(text(), 'reset')]"),
-            # Also check for "Back" button or link as fallback
-            (By.XPATH, "//a[contains(@href, 'ProgramSelect.aspx')]"),
-            (By.XPATH, "//a[contains(text(), 'Back')]")
-        ]
-        
+
+        # 0+1. Look for a real Reset control in a SINGLE round-trip: on a
+        # slow/degraded driver session, each separate find_element() call
+        # costs multiple seconds, so checking ~9 locators one Selenium
+        # command at a time (the old approach) could itself take 30+
+        # seconds even though every individual check fails almost
+        # instantly in the browser. Doing the same search-and-click inside
+        # one execute_script() call costs one round-trip no matter how many
+        # candidates it checks. Deliberately excludes page-navigating links
+        # (ProgramSelect.aspx/"Back") - clicking those blocks for ~25-30s on
+        # a full navigation to a page that doesn't have what's needed next
+        # either (drpSemester doesn't exist there), and the direct reload
+        # below already recovers just as reliably in seconds.
         clicked = False
-        for by, value in reset_locators:
-            try:
-                elem = driver.find_element(by, value)
-                if elem.is_displayed() and elem.is_enabled():
-                    # Scroll into view and click
-                    driver.execute_script("arguments[0].scrollIntoView(true);", elem)
-                    time.sleep(0.1)
-                    elem.click()
-                    logger.info(f"[SYSTEM LOGGER] Reset/Back button clicked successfully via {by}='{value}'")
-                    clicked = True
-                    break
-            except Exception:
-                pass
-                
-        if not clicked:
-            logger.info("[SYSTEM LOGGER] Reset button not found or not clickable. Executing JS reset fallback...")
-            # Try to trigger the postback directly via JS
-            try:
-                driver.execute_script("if(window.__doPostBack) { __doPostBack('ctl00$ContentPlaceHolder1$btnReset',''); }")
+        try:
+            xpaths = [
+                "//*[@id='ctl00_ContentPlaceHolder1_btnReset']",
+                "//*[@id='ctl00_ContentPlaceHolder1_btnreset']",
+                "//input[@value='Reset']",
+                "//input[@value='reset']",
+                "//input[contains(@id, 'Reset')]",
+                "//input[contains(@id, 'reset')]",
+                "//button[contains(text(), 'Reset')]",
+                "//button[contains(text(), 'reset')]",
+                "//a[contains(text(), 'Reset')]",
+                "//a[contains(text(), 'reset')]",
+            ]
+            matched = driver.execute_script(
+                """
+                function tryClick(xp) {
+                    var el = document.evaluate(xp, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null).singleNodeValue;
+                    if (el && el.offsetParent !== null && !el.disabled) {
+                        el.scrollIntoView(true);
+                        el.click();
+                        return true;
+                    }
+                    return false;
+                }
+                var xpaths = arguments[0];
+                for (var i = 0; i < xpaths.length; i++) {
+                    if (tryClick(xpaths[i])) { return xpaths[i]; }
+                }
+                return null;
+                """,
+                xpaths,
+            )
+            if matched:
                 clicked = True
-                logger.info("[SYSTEM LOGGER] JS __doPostBack('ctl00$ContentPlaceHolder1$btnReset','') triggered.")
-            except Exception as js_err:
-                logger.info(f"[SYSTEM LOGGER] JS postback reset failed: {js_err}")
-                
+                logger.info(f"[SYSTEM LOGGER] Reset button clicked via {matched}")
+        except Exception as e:
+            logger.info(f"[SYSTEM LOGGER] Reset-button JS lookup failed: {e}")
+
         if not clicked:
-            # Fallback to driver.get if reset button was completely missing or failed
-            logger.info("[SYSTEM LOGGER] No reset button available. Falling back to clean page reload...")
+            # No real Reset control on this page state (the normal case on
+            # "Wrong Captcha" pages) - reload the results page directly.
+            # Faster and more reliable than an unverified JS __doPostBack
+            # call against a control that doesn't exist on this page (which
+            # would silently resubmit stale form state instead of resetting
+            # it) or a detour through ProgramSelect.aspx.
+            logger.info("[SYSTEM LOGGER] No reset button on this page. Reloading results page directly...")
             url = "http://result.rgpv.ac.in/Result/MCArslt.aspx" if session_program == "MCA" else "http://result.rgpv.ac.in/Result/BErslt.aspx"
             driver.get(url)
+            clicked = True
             
         # Post-reset/reload checks: Wait for the main semester dropdown to be clickable again
         dismiss_alerts_safely(driver)
